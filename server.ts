@@ -277,22 +277,34 @@ app.post("/api/parse", async (req, res) => {
 
     $("[data-message-author-role]").each((i, el) => {
       let role = $(el).attr("data-message-author-role");
-      if (role !== "user" && role !== "assistant") {
-        role = "assistant"; // default fallback
-      }
+      if (role !== "user" && role !== "assistant") return; // skip system/tool
 
-      let target = $(el).find('.markdown');
-      if (target.length === 0) {
-        target = $(el) as any;
+      const $el = $(el);
+      let target: any;
+
+      if (role === "user") {
+        // Grab only the typed text — not copy/edit buttons
+        target = $el.find('[data-message-text-content="true"]').first();
+        if (target.length === 0) target = $el.find('.whitespace-pre-wrap').first();
+        if (target.length === 0) target = $el.find('[class*="user-message"]').first();
+        if (target.length === 0) {
+          const clone = $el.clone();
+          clone.find('button, [class*="action"], [class*="button"], [aria-label]').remove();
+          target = clone;
+        }
       } else {
-        target = target.first();
+        target = $el.find('.markdown').first();
+        if (target.length === 0) target = $el.find('[class*="prose"]').first();
+        if (target.length === 0) target = $el;
       }
 
-      const contentHtml = cleanHtml($, target);
-      messages.push({
-        role: role,
-        content_html: contentHtml,
-      });
+      const contentHtml = cleanHtml($, target.get(0) || target);
+      if (contentHtml.trim().length > 0) {
+        messages.push({
+          role: role,
+          content_html: contentHtml,
+        });
+      }
     });
 
     const now = Date.now();
@@ -1014,36 +1026,72 @@ function extractMessagesFromHtml(html: string) {
       const role = $el.attr('data-message-author-role') || 'assistant';
       if (role !== 'user' && role !== 'assistant') return;
 
-      // Find the markdown content container
-      let target = $el.find('.markdown').first();
-      if (target.length === 0) target = $el.find('[class*="prose"]').first();
-      if (target.length === 0) target = $el;
+      let target;
+      if (role === 'user') {
+        // For user messages, grab only the typed text — not copy/edit buttons.
+        // Try increasingly broad selectors before falling back to the whole element.
+        target = $el.find('[data-message-text-content="true"]').first();
+        if (target.length === 0) target = $el.find('.whitespace-pre-wrap').first();
+        if (target.length === 0) target = $el.find('[class*="user-message"]').first();
+        // Strip the action-buttons container so its text ("Copy", "Edit") is excluded
+        if (target.length === 0) {
+          // Clone and remove known button containers before using whole element
+          const clone = $el.clone();
+          clone.find('button, [class*="action"], [class*="button"], [aria-label]').remove();
+          target = clone as any;
+        }
+      } else {
+        // Assistant messages: find the rendered markdown container
+        target = $el.find('.markdown').first();
+        if (target.length === 0) target = $el.find('[class*="prose"]').first();
+        if (target.length === 0) target = $el;
+      }
 
       const rawEl = target.get(0);
       if (!rawEl) return;
 
       const html = cleanHtml($, rawEl);
-      if (html.trim().length > 5) {
+      if (html.trim().length > 0) {
         domHtmlMessages.push({ role, content_html: html });
       }
     });
 
     if (domHtmlMessages.length > 0) {
-      if (messages.length > 0 && messages.length === domHtmlMessages.length) {
-        // Attach content_html to each JSON-extracted message
-        messages.forEach((msg, i) => {
-          if (domHtmlMessages[i]) {
+      // Remove system/tool messages from JSON-extracted set before comparing —
+      // they never appear in the DOM, which is the #1 cause of count mismatches.
+      const chatMessages = messages.filter(m => m.role === 'user' || m.role === 'assistant');
+
+      if (messages.length > 0) {
+        if (chatMessages.length === domHtmlMessages.length) {
+          // Counts match after filtering — attach content_html by index
+          chatMessages.forEach((msg, i) => {
             msg.content_html = domHtmlMessages[i].content_html;
+          });
+          // Remove system/tool messages from the main array entirely
+          messages.splice(0, messages.length, ...chatMessages);
+        } else {
+          // Counts still differ — best-effort role-aware merge, then strip system msgs
+          let domIdx = 0;
+          for (const msg of messages) {
+            if (msg.role !== 'user' && msg.role !== 'assistant') continue;
+            if (domIdx < domHtmlMessages.length) {
+              // Match if roles agree, or attach anyway if no role mismatch is detected
+              if (domHtmlMessages[domIdx].role === msg.role || domIdx === 0) {
+                msg.content_html = domHtmlMessages[domIdx].content_html;
+                domIdx++;
+              }
+            }
           }
-        });
-      } else if (messages.length === 0) {
-        // Use DOM messages as primary source
+          // Still strip system/tool messages so they don't show in the UI
+          messages.splice(0, messages.length, ...chatMessages);
+        }
+      } else {
+        // No JSON messages — use DOM as primary source
         domHtmlMessages.forEach(dm => {
           let contentText = '';
           try {
             contentText = turndownService.turndown(dm.content_html);
           } catch (e) {
-            // Fallback: strip HTML tags to get plain text
             contentText = dm.content_html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
           }
           messages.push({
@@ -1053,6 +1101,10 @@ function extractMessagesFromHtml(html: string) {
           });
         });
       }
+    } else if (messages.length > 0) {
+      // No DOM HTML found but JSON messages exist — still strip system/tool messages
+      const chatMessages = messages.filter(m => m.role === 'user' || m.role === 'assistant');
+      messages.splice(0, messages.length, ...chatMessages);
     }
   }
 
