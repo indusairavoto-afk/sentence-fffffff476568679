@@ -232,6 +232,8 @@ export default function App() {
     }
     return '';
   });
+  // Only true when the extension actually responds to a live ping
+  const [extensionVerified, setExtensionVerified] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -239,21 +241,42 @@ export default function App() {
     }
   }, [extensionId]);
 
+  // Ping the extension and verify it's alive within 1.5s
+  const pingExtension = () => {
+    if (typeof window === 'undefined') return;
+    setExtensionVerified(false);
+    const timeout = setTimeout(() => {
+      // No response within 1.5s — extension is not active
+      setExtensionVerified(false);
+    }, 1500);
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'BRIDGE_EXT_INSTALLED') {
+        clearTimeout(timeout);
+        const extId = event.data.extensionId;
+        setExtensionId(extId);
+        setExtensionVerified(true);
+        localStorage.setItem('bridge_ext_id', extId);
+        window.removeEventListener('message', handleMessage);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    window.postMessage({ type: 'BRIDGE_EXT_PING' }, '*');
+  };
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      // Listen for extension messages globally (for re-installs mid-session)
       const handleMessage = (event: MessageEvent) => {
         if (event.data && event.data.type === 'BRIDGE_EXT_INSTALLED') {
           const extId = event.data.extensionId;
           setExtensionId(extId);
+          setExtensionVerified(true);
           localStorage.setItem('bridge_ext_id', extId);
         }
       };
-      
       window.addEventListener('message', handleMessage);
-      
-      // Ping to see if it's there
-      window.postMessage({ type: 'BRIDGE_EXT_PING' }, '*');
-      
+      // Ping on mount
+      pingExtension();
       return () => window.removeEventListener('message', handleMessage);
     }
   }, []);
@@ -916,7 +939,7 @@ export default function App() {
                       </div>
                       
                       <div className="relative w-full max-w-md z-10 mt-3 flex justify-center">
-                        {extensionId ? (
+                        {extensionVerified ? (
                            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 rounded-full text-[10px] uppercase tracking-widest font-bold">
                              <Puzzle size={12} /> Extension Linked
                            </div>
@@ -1217,7 +1240,7 @@ export default function App() {
                 <h3 className="text-[10px] uppercase tracking-[0.3em] text-zinc-500 font-bold bg-zinc-100 dark:bg-zinc-900 px-3 py-1 rounded inline-flex">Bridged Conversion</h3>
                 <div className="flex gap-2">
                   <button 
-                    onClick={() => { setChatData(null); setHtmlFile(null); setShareLink(''); setInputMode('file'); }}
+                    onClick={() => { setChatData(null); setHtmlFile(null); setShareLink(''); setInputMode('link'); pingExtension(); }}
                     className="text-[9px] uppercase tracking-[0.2em] text-zinc-500 hover:text-red-500 flex items-center gap-1.5 transition-colors font-bold"
                   >
                     <Trash2 size={12} /> Clear Bridge
