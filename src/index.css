@@ -1,1 +1,117 @@
 @import "tailwindcss";
+
+/* Rich HTML content extracted from chat platforms */
+.chat-html-content h1,
+.chat-html-content h2,
+.chat-html-content h3,
+.chat-html-content h4,
+.chat-html-content h5,
+.chat-html-content h6 {
+  font-weight: 700;
+  line-height: 1.3;
+  margin-top: 1.1em;
+  margin-bottom: 0.4em;
+}
+.chat-html-content h1 { font-size: 1.4em; }
+.chat-html-content h2 { font-size: 1.25em; }
+.chat-html-content h3 { font-size: 1.1em; }
+.chat-html-content h4 { font-size: 1em; }
+
+.chat-html-content p {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  line-height: 1.7;
+}
+
+.chat-html-content strong, .chat-html-content b {
+  font-weight: 700;
+}
+
+.chat-html-content em, .chat-html-content i {
+  font-style: italic;
+}
+
+.chat-html-content ul, .chat-html-content ol {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  padding-left: 1.6em;
+}
+
+.chat-html-content ul { list-style-type: disc; }
+.chat-html-content ol { list-style-type: decimal; }
+
+.chat-html-content li {
+  margin-top: 0.2em;
+  margin-bottom: 0.2em;
+  line-height: 1.6;
+}
+
+.chat-html-content pre {
+  background: rgba(0,0,0,0.06);
+  border-radius: 0.5em;
+  padding: 0.8em 1em;
+  overflow-x: auto;
+  margin: 0.8em 0;
+  font-size: 0.9em;
+}
+
+.dark .chat-html-content pre {
+  background: rgba(255,255,255,0.07);
+}
+
+.chat-html-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.875em;
+  background: rgba(0,0,0,0.06);
+  border-radius: 0.25em;
+  padding: 0.1em 0.35em;
+}
+
+.dark .chat-html-content code {
+  background: rgba(255,255,255,0.1);
+}
+
+.chat-html-content pre code {
+  background: none;
+  padding: 0;
+  font-size: 1em;
+}
+
+.chat-html-content blockquote {
+  border-left: 3px solid currentColor;
+  opacity: 0.75;
+  padding-left: 1em;
+  margin: 0.75em 0;
+}
+
+.chat-html-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.75em 0;
+  font-size: 0.9em;
+}
+
+.chat-html-content th,
+.chat-html-content td {
+  border: 1px solid rgba(128,128,128,0.3);
+  padding: 0.4em 0.8em;
+  text-align: left;
+}
+
+.chat-html-content th {
+  font-weight: 600;
+  background: rgba(0,0,0,0.04);
+}
+
+.dark .chat-html-content th {
+  background: rgba(255,255,255,0.05);
+}
+
+.chat-html-content a {
+  color: #3b82f6;
+  text-decoration: underline;
+}
+
+.chat-html-content a:hover {
+  opacity: 0.8;
+}

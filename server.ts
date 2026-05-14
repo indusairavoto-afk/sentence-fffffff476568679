@@ -479,6 +479,7 @@ app.post("/api/extract-html", async (req, res) => {
     const formattedMessages = messages.map((m, index) => ({
       role: m.role,
       content: m.content,
+      content_html: m.content_html || undefined,
       images: (m as any).images || [],
       timestamp:
         m.timestamp ||
@@ -602,6 +603,7 @@ function extractMessagesFromHtml(html: string) {
   const messages: {
     role: string;
     content: string;
+    content_html?: string;
     timestamp?: string;
     imagesUrls?: string[];
   }[] = [];
@@ -955,6 +957,51 @@ function extractMessagesFromHtml(html: string) {
           .replace(/\\"/g, '"')
           .replace(/\\\\/g, "\\"),
       });
+    }
+  }
+
+  // Always extract rendered HTML from ChatGPT DOM elements for rich display formatting.
+  // This runs regardless of whether JSON parsers found messages, so we get proper
+  // <strong>, <h3>, <ul> etc. instead of raw markdown text like **bold**, ### heading.
+  {
+    const domHtmlMessages: { role: string; content_html: string }[] = [];
+    $('[data-message-author-role]').each((_, el) => {
+      const $el = $(el);
+      const role = $el.attr('data-message-author-role') || 'assistant';
+      if (role !== 'user' && role !== 'assistant') return;
+
+      // Find the markdown content container
+      let target = $el.find('.markdown').first();
+      if (target.length === 0) target = $el.find('[class*="prose"]').first();
+      if (target.length === 0) target = $el;
+
+      const rawEl = target.get(0);
+      if (!rawEl) return;
+
+      const html = cleanHtml($, rawEl);
+      if (html.trim().length > 5) {
+        domHtmlMessages.push({ role, content_html: html });
+      }
+    });
+
+    if (domHtmlMessages.length > 0) {
+      if (messages.length > 0 && messages.length === domHtmlMessages.length) {
+        // Attach content_html to each JSON-extracted message
+        messages.forEach((msg, i) => {
+          if (domHtmlMessages[i]) {
+            msg.content_html = domHtmlMessages[i].content_html;
+          }
+        });
+      } else if (messages.length === 0) {
+        // Use DOM messages as primary source
+        domHtmlMessages.forEach(dm => {
+          messages.push({
+            role: dm.role,
+            content: turndownService.turndown(dm.content_html),
+            content_html: dm.content_html,
+          });
+        });
+      }
     }
   }
 
