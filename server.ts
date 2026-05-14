@@ -181,6 +181,7 @@ app.get("/api/debug-logs", (req, res) => res.json(debugLogs));
 const PORT = parseInt(process.env.PORT || "5000", 10);
 
 app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "20mb", extended: true }));
 
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });

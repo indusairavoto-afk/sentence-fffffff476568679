@@ -1,0 +1,77 @@
+I have a Chrome extension that extracts full ChatGPT share conversations correctly inside the content script.
+
+The extraction is now PERFECT.
+
+But when I send the extracted chat text to my server (hosted on Render), the beginning of the chat is always missing when displayed on my website.
+
+This is NOT a DOM or timing problem anymore.
+This is a data transport corruption problem.
+
+Root cause
+
+I am currently sending the entire chat as one huge string like this:
+
+fetch("/api/save", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ text: hugeChatText })
+});
+
+For long chats, this exceeds:
+
+Chrome extension message size limits
+Fetch payload buffering
+Express body parser default limit (~100kb)
+
+When this happens, the request body gets silently truncated from the start, and only the tail end reaches the server.
+
+That is why the first part of the chat is always missing.
+
+What I need you to change
+
+Do NOT send one large text string.
+
+Instead:
+
+Step 1 — Extract structured messages in content script
+
+Create an array like:
+
+[
+  { role: "user", text: "..." },
+  { role: "assistant", text: "..." },
+  { role: "user", text: "..." }
+]
+Step 2 — Send this array to background
+chrome.runtime.sendMessage({
+  type: "CHAT_MESSAGES",
+  messages: messagesArray
+});
+Step 3 — Background sends this JSON to server
+fetch("/api/save", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ messages: messagesArray })
+});
+Step 4 — Increase Express limit on server
+
+In my Render Node/Express server, change:
+
+app.use(express.json());
+
+to:
+
+app.use(express.json({ limit: "20mb" }));
+app.use(express.urlencoded({ limit: "20mb", extended: true }));
+Step 5 — On server, store messages array directly
+
+Do NOT rebuild from one string.
+
+Important understanding
+
+The extractor is correct.
+The bug is caused by sending a huge string through multiple layers that truncate the start of the data.
+
+We must switch to structured message transport instead of one big text blob.
+
+Please update my codebase to follow this architecture.

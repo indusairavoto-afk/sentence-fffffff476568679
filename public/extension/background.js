@@ -15,10 +15,7 @@ chrome.runtime.onMessageExternal.addListener(
               func: () => {
                 return new Promise((resolve) => {
 
-                  // ── Phase 1: Wait for the JS framework to hydrate ──────────
-                  // ChatGPT share pages boot a React/Remix app. We wait until
-                  // __remixContext appears OR any message node is in the DOM,
-                  // giving up after 15 s.
+                  // ── Phase 1: Wait for framework hydration ──────────────────
                   let bootChecks = 0;
                   const bootInterval = setInterval(() => {
                     bootChecks++;
@@ -33,42 +30,29 @@ chrome.runtime.onMessageExternal.addListener(
                     }
                   }, 500);
 
-                  // ── Phase 2: Scroll to absolute top, then wait for the
-                  //    very first message to mount via MutationObserver ────────
-                  // ChatGPT auto-scrolls the page to the middle on load, which
-                  // means top messages are not yet in the DOM. Scrolling to top
-                  // triggers the intersection observer that mounts them.
+                  // ── Phase 2: Scroll to absolute top & wait for first
+                  //    message to mount via MutationObserver ────────────────
                   function scrollToTopAndWait() {
-                    // Interrupt ChatGPT's own scroll and pin the page at 0
                     window.scrollTo({ top: 0, behavior: 'instant' });
 
-                    // Keep fighting any programmatic scroll for 1.5 s
+                    // Fight ChatGPT's auto-scroll for 1.5 s
                     let topLockCount = 0;
                     const topLockInterval = setInterval(() => {
                       window.scrollTo({ top: 0, behavior: 'instant' });
-                      topLockCount++;
-                      if (topLockCount >= 6) clearInterval(topLockInterval); // 6 × 250 ms = 1.5 s
+                      if (++topLockCount >= 6) clearInterval(topLockInterval);
                     }, 250);
 
-                    // Use a MutationObserver to detect when the first assistant
-                    // message renders into the DOM (the one that was off-screen)
                     let topMessageSeen = false;
-
                     const observer = new MutationObserver(() => {
                       const firstMsg = document.querySelector('[data-message-author-role]');
                       if (firstMsg && !topMessageSeen) {
                         topMessageSeen = true;
-                        // Give React one more tick to finish painting siblings
-                        setTimeout(() => {
-                          observer.disconnect();
-                          doFullScrollSweep();
-                        }, 1500);
+                        setTimeout(() => { observer.disconnect(); doFullScrollSweep(); }, 1500);
                       }
                     });
-
                     observer.observe(document.body, { childList: true, subtree: true });
 
-                    // Safety fallback: if observer never fires within 5 s, proceed anyway
+                    // Safety fallback
                     setTimeout(() => {
                       if (!topMessageSeen) {
                         topMessageSeen = true;
@@ -78,28 +62,19 @@ chrome.runtime.onMessageExternal.addListener(
                     }, 5000);
                   }
 
-                  // ── Phase 3: Scroll from top → bottom in small steps ──────
-                  // Each step forces ChatGPT's virtual-scroll engine to render
-                  // the next batch of messages into the DOM.
+                  // ── Phase 3: Scroll top → bottom to force-render all msgs ──
                   function doFullScrollSweep() {
                     window.scrollTo({ top: 0, behavior: 'instant' });
 
-                    // Measure total scrollable height after a brief settle
                     setTimeout(() => {
-                      const totalHeight = Math.max(
-                        document.body.scrollHeight,
-                        document.documentElement.scrollHeight
-                      );
-
                       let currentPos = 0;
-                      const stepSize  = 500;   // px per step
-                      const stepDelay = 200;   // ms between steps — slow enough for React to render
+                      const stepSize  = 500;
+                      const stepDelay = 200;
 
                       const doScroll = () => {
                         currentPos += stepSize;
                         window.scrollTo({ top: currentPos, behavior: 'instant' });
 
-                        // Re-measure height as new messages render and push the page taller
                         const newHeight = Math.max(
                           document.body.scrollHeight,
                           document.documentElement.scrollHeight
@@ -108,10 +83,12 @@ chrome.runtime.onMessageExternal.addListener(
                         if (currentPos < newHeight) {
                           setTimeout(doScroll, stepDelay);
                         } else {
-                          // Reached the bottom — brief pause then capture
-                          setTimeout(() => {
-                            resolve(document.documentElement.outerHTML);
-                          }, 600);
+                          // ── Phase 4: Extract structured messages from DOM ──
+                          // This replaces sending raw outerHTML (which can be
+                          // 5-20 MB) with a compact JSON array of just the
+                          // message content — drastically reducing payload size
+                          // and eliminating Chrome extension message limits.
+                          setTimeout(() => extractMessages(), 600);
                         }
                       };
 
@@ -119,16 +96,61 @@ chrome.runtime.onMessageExternal.addListener(
                     }, 300);
                   }
 
+                  // ── Phase 4: Structured message extraction ─────────────────
+                  function extractMessages() {
+                    const title = document.title ||
+                      document.querySelector('title')?.textContent ||
+                      'ChatGPT Chat';
+
+                    const messages = [];
+                    const REMOVE_SELECTORS = 'button, [aria-label], svg, [data-testid*="action"], [class*="btn"], [class*="button"], form';
+
+                    document.querySelectorAll('[data-message-author-role]').forEach(el => {
+                      const role = el.getAttribute('data-message-author-role');
+                      if (role !== 'user' && role !== 'assistant') return;
+
+                      let target;
+                      if (role === 'user') {
+                        target = el.querySelector('[data-message-text-content="true"]') ||
+                                 el.querySelector('.whitespace-pre-wrap') ||
+                                 el.querySelector('[class*="user-message"]') ||
+                                 el;
+                      } else {
+                        target = el.querySelector('.markdown') ||
+                                 el.querySelector('[class*="prose"]') ||
+                                 el;
+                      }
+
+                      // Clone and strip UI chrome (buttons, icons, etc.)
+                      const clone = target.cloneNode(true);
+                      clone.querySelectorAll(REMOVE_SELECTORS).forEach(n => n.remove());
+
+                      const text = (clone.textContent || '').trim();
+                      const html = (clone.innerHTML  || '').trim();
+
+                      if (text.length > 0) {
+                        messages.push({ role, content: text, content_html: html });
+                      }
+                    });
+
+                    resolve({ success: true, title, messages });
+                  }
+
                 });
               }
             }, (results) => {
-              let html = null;
+              let payload = null;
               if (results && results[0] && results[0].result) {
-                html = results[0].result;
+                payload = results[0].result;
               }
 
               chrome.tabs.remove(tabId);
-              sendResponse({ html: html, success: !!html });
+
+              if (payload && payload.success && payload.messages) {
+                sendResponse(payload);           // { success, title, messages }
+              } else {
+                sendResponse({ success: false }); // signal failure gracefully
+              }
             });
           }
         };

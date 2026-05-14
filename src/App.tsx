@@ -365,7 +365,7 @@ export default function App() {
               { until: 28, phase: () => 'Opening chat tab...', speed: 300 },
               { until: 38, phase: () => 'Loading page content...', speed: 250 },
               { until: 82, phase: (p) => `Scrolling through messages... ${Math.round(((p - 38) / 44) * 100)}%`, speed: 180 },
-              { until: 90, phase: () => 'Capturing full HTML...', speed: 200 },
+              { until: 90, phase: () => 'Extracting messages...', speed: 200 },
             ];
             let extPercent = 18;
             extPhaseInterval = setInterval(() => {
@@ -374,23 +374,48 @@ export default function App() {
               setUploadProgress({ phase: phase.phase(extPercent), percent: extPercent });
             }, 200);
 
-            const extResponse = await new Promise<string>((resolve, reject) => {
+            const extResult = await new Promise<{ title: string; messages: any[] } | null>((resolve, reject) => {
               (window as any).chrome.runtime.sendMessage(extensionId, { action: 'fetch_html', url: shareLink }, (response: any) => {
                 if (extPhaseInterval) clearInterval(extPhaseInterval);
                 if ((window as any).chrome.runtime.lastError) {
                   reject(new Error((window as any).chrome.runtime.lastError.message));
-                } else if (!response || !response.success || !response.html) {
-                  reject(new Error('Extension failed to extract document HTML from the page.'));
+                } else if (!response || !response.success) {
+                  reject(new Error('Extension failed to extract the page.'));
+                } else if (response.messages) {
+                  // New structured format — no HTML transport needed
+                  console.log("Got structured messages from extension:", response.messages.length);
+                  resolve({ title: response.title || 'Extracted Chat', messages: response.messages });
                 } else {
-                  console.log("Got HTML from extension, length:", response.html.length);
-                  resolve(response.html);
+                  reject(new Error('Extension returned an unexpected response format.'));
                 }
               });
             });
-            setUploadProgress({ phase: 'Sending to server...', percent: 92 });
-            // Pretend it was a file upload and send HTML to standard extraction endpoint
-            payload = { html: extResponse };
-            endpoint = '/api/extract-html';
+
+            if (!extResult || extResult.messages.length === 0) {
+              throw new Error('No messages were found in this chat. The page may be empty or unsupported.');
+            }
+
+            // Build ChatData directly — no server round-trip needed
+            setUploadProgress({ phase: 'Formatting messages...', percent: 94 });
+            const now = Date.now();
+            const formattedMessages = extResult.messages.map((m: any, index: number) => ({
+              role: m.role,
+              content: m.content || m.content_html || '',
+              content_html: m.content_html || undefined,
+              images: [],
+              timestamp: new Date(now - (extResult.messages.length - index) * 60000).toISOString(),
+            }));
+
+            setUploadProgress({ phase: 'Extraction Complete! Bridging...', percent: 100 });
+            setTimeout(() => {
+              setChatData({ title: extResult.title, messages: formattedMessages });
+              if (action === 'pdf') setShowPdfEditor(true);
+              setUploadProgress(null);
+              setLoading(false);
+              setShowDonationModal(true);
+              toast.success('Successfully extracted chat!');
+            }, 600);
+            return;
           } else {
             const response = await fetch('/api/extract', {
               method: 'POST',
