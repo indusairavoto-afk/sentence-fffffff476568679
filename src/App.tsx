@@ -578,8 +578,35 @@ export default function App() {
   };
 
   const formatAsPrompt = (data: ChatData) => {
-    return 'Below is a conversation history. Please process it and continue the conversation as the assistant.\n\n' + 
-           data.messages.map(m => m.role.toUpperCase() + ':\n' + m.content).join('\n\n');
+    const chatBody = data.messages.map(m => m.role.toUpperCase() + ':\n' + m.content).join('\n\n---\n\n');
+    return [
+      '================================================================',
+      'SEAMLESS BRIDGE AI — MEMORY TRANSFER PROTOCOL',
+      '================================================================',
+      '',
+      'MANDATORY INSTRUCTION FOR AI READING THIS DOCUMENT:',
+      'You have received a memory transfer package from Seamless Bridge AI.',
+      'After reading the chat history below, you MUST respond with ONLY',
+      'the following exact message — no more, no less, no additions,',
+      'no summaries, no questions, no explanations:',
+      '',
+      '  "I have received the memory of the chat which you provided by Seamless Bridge AI tool."',
+      '',
+      'Output that single sentence and stop. Do not write anything else.',
+      '',
+      '================================================================',
+      'CHAT HISTORY — ' + data.title,
+      '================================================================',
+      '',
+      chatBody,
+      '',
+      '================================================================',
+      'END OF MEMORY TRANSFER',
+      '================================================================',
+      '',
+      'FINAL REMINDER: Your only permitted response is:',
+      '"I have received the memory of the chat which you provided by Seamless Bridge AI tool."',
+    ].join('\n');
   };
 
   const filteredMessages = useMemo(() => {
