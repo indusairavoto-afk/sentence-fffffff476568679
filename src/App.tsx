@@ -341,9 +341,27 @@ export default function App() {
 
         try {
           if (extensionId && typeof window !== 'undefined' && (window as any).chrome && (window as any).chrome.runtime) {
-            setUploadProgress({ phase: 'Extracting via Extension...', percent: 20 });
+            setUploadProgress({ phase: 'Opening chat tab...', percent: 18 });
+
+            // Animate progress through scroll stages while the extension works
+            let scrollPct = 0;
+            let extPhaseInterval: ReturnType<typeof setInterval> | null = null;
+            const EXT_PHASES: { until: number; phase: (pct: number) => string; speed: number }[] = [
+              { until: 28, phase: () => 'Opening chat tab...', speed: 300 },
+              { until: 38, phase: () => 'Loading page content...', speed: 250 },
+              { until: 82, phase: (p) => `Scrolling through messages... ${Math.round(((p - 38) / 44) * 100)}%`, speed: 180 },
+              { until: 90, phase: () => 'Capturing full HTML...', speed: 200 },
+            ];
+            let extPercent = 18;
+            extPhaseInterval = setInterval(() => {
+              extPercent = Math.min(extPercent + 1, 90);
+              const phase = EXT_PHASES.find(p => extPercent < p.until) || EXT_PHASES[EXT_PHASES.length - 1];
+              setUploadProgress({ phase: phase.phase(extPercent), percent: extPercent });
+            }, 200);
+
             const extResponse = await new Promise<string>((resolve, reject) => {
               (window as any).chrome.runtime.sendMessage(extensionId, { action: 'fetch_html', url: shareLink }, (response: any) => {
+                if (extPhaseInterval) clearInterval(extPhaseInterval);
                 if ((window as any).chrome.runtime.lastError) {
                   reject(new Error((window as any).chrome.runtime.lastError.message));
                 } else if (!response || !response.success || !response.html) {
@@ -354,6 +372,7 @@ export default function App() {
                 }
               });
             });
+            setUploadProgress({ phase: 'Sending to server...', percent: 92 });
             // Pretend it was a file upload and send HTML to standard extraction endpoint
             payload = { html: extResponse };
             endpoint = '/api/extract-html';
