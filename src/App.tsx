@@ -102,6 +102,19 @@ const URL_PLACEHOLDERS = [
   "https://grok.com/chat/..."
 ];
 
+const PLATFORM_CONFIG: { pattern: RegExp; name: string; imgUrl: string; color: string }[] = [
+  { pattern: /chatgpt\.com/i,        name: 'ChatGPT',    imgUrl: 'https://res.cloudinary.com/domyd01x9/image/upload/q_auto/f_auto/v1778425627/chatgpt-icon_dnsvgw.webp',           color: '#10a37f' },
+  { pattern: /claude\.ai/i,          name: 'Claude',     imgUrl: 'https://res.cloudinary.com/domyd01x9/image/upload/q_auto/f_auto/v1778425650/claude-ai-icon_kp64b4.webp',          color: '#d4a85a' },
+  { pattern: /gemini\.google\.com/i, name: 'Gemini',     imgUrl: 'https://res.cloudinary.com/domyd01x9/image/upload/q_auto/f_auto/v1778425667/Google_Gemini_icon_2025.svg_rsefbe.webp', color: '#4285f4' },
+  { pattern: /deepseek\.com/i,       name: 'DeepSeek',   imgUrl: 'https://res.cloudinary.com/domyd01x9/image/upload/q_auto/f_auto/v1778425429/deepseek-logo-icon_hpuvjw.webp',       color: '#4d6bfe' },
+  { pattern: /grok\.com/i,           name: 'Grok',       imgUrl: 'https://res.cloudinary.com/domyd01x9/image/upload/q_auto/f_auto/v1778426015/Grok-icon.svg_y9wwzw.png',            color: '#ffffff' },
+  { pattern: /perplexity\.ai/i,      name: 'Perplexity', imgUrl: 'https://res.cloudinary.com/domyd01x9/image/upload/q_auto/f_auto/v1778425477/perplexity-ai-icon_tdawdq.webp',      color: '#20b8cd' },
+];
+
+function detectPlatform(url: string) {
+  return PLATFORM_CONFIG.find(p => p.pattern.test(url)) ?? null;
+}
+
 function useTypewriterPlaceholder(phrases: string[], typingSpeed = 50, deletingSpeed = 30, pauseBeforeDelete = 2000, pauseBeforeType = 500) {
   const [text, setText] = useState('');
   const [phraseIndex, setPhraseIndex] = useState(0);
@@ -207,6 +220,7 @@ export default function App() {
   const [linkStatus, setLinkStatus] = useState<{ step: string; progress: number } | null>(null);
   const [pendingAction, setPendingAction] = useState<'pdf' | 'bridge'>('bridge');
   const [uploadProgress, setUploadProgress] = useState<{ phase: string; percent: number } | null>(null);
+  const [detectedPlatform, setDetectedPlatform] = useState<typeof PLATFORM_CONFIG[number] | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentTab, setCurrentTab] = useState<'converter' | 'vault' | 'about' | 'impact' | 'faq' | 'privacy' | 'terms' | 'contact' | 'security' | 'apidocs' | 'extension'>('converter');
   const [inputMode, setInputMode] = useState<'file' | 'link'>('link');
@@ -336,6 +350,7 @@ export default function App() {
         payload = { html: htmlText };
         endpoint = '/api/extract-html';
       } else {
+        setDetectedPlatform(detectPlatform(shareLink));
         setUploadProgress({ phase: 'Sending Link to Server...', percent: 10 });
         setLoading(true);
 
@@ -676,15 +691,48 @@ export default function App() {
                 <div className="w-full max-w-sm px-4">
                   <div className="flex justify-between items-center mb-3 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-700 dark:text-zinc-400">
                     <span>Signal Strength</span>
-                    <span className="text-zinc-900 dark:text-white font-bold">{uploadProgress?.percent || 0}%</span>
+                    <div className="flex items-center gap-2">
+                      <AnimatePresence>
+                        {detectedPlatform && (
+                          <motion.div
+                            key={detectedPlatform.name}
+                            initial={{ opacity: 0, x: 8, scale: 0.9 }}
+                            animate={{ opacity: 1, x: 0, scale: 1 }}
+                            exit={{ opacity: 0, x: 8, scale: 0.9 }}
+                            transition={{ duration: 0.25 }}
+                            className="flex items-center gap-1.5 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-full px-2 py-0.5"
+                          >
+                            <img
+                              src={detectedPlatform.imgUrl}
+                              alt={detectedPlatform.name}
+                              className="w-3 h-3 object-contain"
+                              referrerPolicy="no-referrer"
+                            />
+                            <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 dark:text-zinc-300">
+                              {detectedPlatform.name}
+                            </span>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                      <span className="text-zinc-900 dark:text-white font-bold">{uploadProgress?.percent || 0}%</span>
+                    </div>
                   </div>
                   <div className="h-1.5 w-full bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden shadow-inner relative">
                     <motion.div
-                      className="absolute top-0 bottom-0 left-0 bg-zinc-900 dark:bg-zinc-100 rounded-full"
+                      className="absolute top-0 bottom-0 left-0 rounded-full"
+                      style={{ background: detectedPlatform ? detectedPlatform.color : undefined }}
                       initial={{ width: 0 }}
                       animate={{ width: `${uploadProgress?.percent || 0}%` }}
                       transition={{ ease: "easeOut", duration: 0.3 }}
                     />
+                    {!detectedPlatform && (
+                      <motion.div
+                        className="absolute top-0 bottom-0 left-0 bg-zinc-900 dark:bg-zinc-100 rounded-full"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${uploadProgress?.percent || 0}%` }}
+                        transition={{ ease: "easeOut", duration: 0.3 }}
+                      />
+                    )}
                   </div>
                 </div>
               </div>
