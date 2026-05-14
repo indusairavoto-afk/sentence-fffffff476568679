@@ -700,7 +700,7 @@ function extractMessagesFromHtml(html: string) {
     const scripts = $("script, style, noscript, nav, header, footer").map((_, el) => $(el).html()).get();
     for (const text of scripts) {
       if (text && (text.includes("streamController.enqueue") || text.includes("push("))) {
-        const regex = /enqueue\(\s*new\s*Uint8Array\(\s*\[(.*?)]\s*\)\s*\)|enqueue\(\s*new\s*TextEncoder\(\)\.encode\(\s*"((?:[^"\\]|\\.)*)"\s*\)\s*\)|enqueue\(\s*"((?:[^"\\]|\\.)*)"\s*\)|push\(\s*"((?:[^"\\]|\\.)*)"\s*\)/g;
+        const regex = /enqueue\(\s*new\s*Uint8Array\(\s*\[(.*?)]\s*\)\s*\)|enqueue\(\s*new\s*TextEncoder\(\)\.encode\(\s*"((?:[^"\\]|\\.)*)"\s*\)\s*\)|enqueue\(\s*"((?:[^"\\]|\\.)*)"\s*\)|push\(\s*(?:\[[^"\]]*"|")((?:[^"\\]|\\.)*)"(?:\s*\])?\s*\)/g;
         let match;
         while ((match = regex.exec(text)) !== null) {
           try {
@@ -1264,14 +1264,21 @@ function extractMessagesFromHtml(html: string) {
 
       // Ignore "cookie preferences" or footer boilerplate
       const cleanedContent = content
-        .replace(/This is a copy of a shared ChatGPT conversation[\s\S]*Cookie Preferences\./gi, "")
+        .replace(/This is a copy of a shared ChatGPT conversation[\s\S]*?Cookie Preferences\./gi, "")
         .replace(/ChatGPT can make mistakes\. Check important info\./gi, "")
         .replace(/Report conversation/gi, "")
         .replace(/_._oai_[\s\S]*?\(\)/g, "") // Specific junk removal
         .replace(/\{[\s\S]*?\}/g, "") // Remove likely JS objects if they leaked as text
+        .replace(/window.*?oai_logHTML[\s\S]*?Date\.now\(\)(?:\}\)|\})/g, "") // new ChatGPT fallback JS junk
+        .replace(/window.*?oai_SSR[\s\S]*?(?:Date\.now|requestAnimationFrame)[\s\S]*?\)\}\)/g, "") // new ChatGPT fallback JS junk
+        .replace(/window\.\\_\\_oai[^\s]*/g, "") // escaped versions
+        .replace(/window\.\.\\.oai[^\s]*/g, "") // markdown escaped version
         .trim();
 
-      if (cleanedContent.length > 50 && !cleanedContent.includes("_._oai_")) {
+      // If the content is literally just the fallback junk that got past the regexes, drop it
+      if (cleanedContent.includes("oai_logHTML") || cleanedContent.includes("oai_SSR_HTML") || cleanedContent.includes("requestAnimationFrame")) {
+         // It's just junk script data, skip fallback
+      } else if (cleanedContent.length > 50 && !cleanedContent.includes("_._oai_")) {
         // Check if this looks like a generic transcript dump with "SOMEONE SAID:" markers
         const splitRegex =
           /\n?(?:(?:[A-Za-z0-9_ ]+) )?([A-Za-z0-9_]+) SAID:\n/gi;
