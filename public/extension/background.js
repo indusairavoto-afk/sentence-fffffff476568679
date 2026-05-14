@@ -3,7 +3,6 @@ chrome.runtime.onMessageExternal.addListener(
     if (request.action === 'fetch_html' && request.url) {
       console.log('Received request to fetch:', request.url);
       
-      // Open tab in background
       chrome.tabs.create({ url: request.url, active: false }, (tab) => {
         const tabId = tab.id;
         
@@ -11,27 +10,69 @@ chrome.runtime.onMessageExternal.addListener(
           if (updatedTabId === tabId && info.status === 'complete') {
             chrome.tabs.onUpdated.removeListener(listener);
             
-            // Inject script to poll for content to render instead of blind wait
             chrome.scripting.executeScript({
               target: { tabId: tabId },
               func: () => {
                 return new Promise((resolve) => {
+                  // Step 1: Wait for initial content to appear
                   let checks = 0;
-                  const maxChecks = 20; // 10 seconds (500ms * 20)
-                  
-                  const interval = setInterval(() => {
+                  const maxChecks = 30;
+
+                  const waitForContent = setInterval(() => {
                     checks++;
-                    // Typical ChatGPT message selectors or Remix context
-                    const hasMessages = document.querySelectorAll('article, [data-message-author-role], .prose, .markdown').length > 0;
+                    const hasMessages = document.querySelectorAll(
+                      'article, [data-message-author-role], .prose, .markdown'
+                    ).length > 0;
                     const hasRemix = document.documentElement.innerHTML.includes('__remixContext');
-                    
-                    // If content seems to be rendered, or we timed out
-                    if ((hasMessages || hasRemix) && checks > 2) { // Wait at least 1s after finding it
-                      clearInterval(interval);
-                      setTimeout(() => resolve(document.documentElement.outerHTML), 1000);
-                    } else if (checks >= maxChecks) {
-                      clearInterval(interval);
-                      resolve(document.documentElement.outerHTML);
+
+                    if ((hasMessages || hasRemix) || checks >= maxChecks) {
+                      clearInterval(waitForContent);
+
+                      // Step 2: Scroll to top first, then scroll down gradually
+                      // to force all lazy-rendered messages into the DOM
+                      window.scrollTo({ top: 0, behavior: 'instant' });
+
+                      setTimeout(() => {
+                        const scrollStep = async () => {
+                          return new Promise((scrollDone) => {
+                            const scrollContainer =
+                              document.querySelector('[data-testid="conversation-turns-list"]') ||
+                              document.querySelector('main') ||
+                              document.scrollingElement ||
+                              document.documentElement;
+
+                            const totalHeight = Math.max(
+                              document.body.scrollHeight,
+                              scrollContainer.scrollHeight
+                            );
+
+                            let currentPos = 0;
+                            const stepSize = 600;
+                            const stepDelay = 180;
+
+                            const doScroll = () => {
+                              currentPos += stepSize;
+                              window.scrollTo({ top: currentPos, behavior: 'instant' });
+
+                              if (currentPos < totalHeight + stepSize) {
+                                setTimeout(doScroll, stepDelay);
+                              } else {
+                                // Reached bottom — scroll back to top then capture
+                                setTimeout(() => {
+                                  window.scrollTo({ top: 0, behavior: 'instant' });
+                                  setTimeout(() => scrollDone(), 600);
+                                }, 400);
+                              }
+                            };
+
+                            doScroll();
+                          });
+                        };
+
+                        scrollStep().then(() => {
+                          resolve(document.documentElement.outerHTML);
+                        });
+                      }, 800);
                     }
                   }, 500);
                 });
@@ -51,7 +92,6 @@ chrome.runtime.onMessageExternal.addListener(
         chrome.tabs.onUpdated.addListener(listener);
       });
       
-      // Return true to indicate we will send a response asynchronously
       return true;
     }
   }
