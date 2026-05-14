@@ -599,13 +599,16 @@ export default function App() {
     return `# ${data.title}\n\n` + data.messages.map(m => `### ${m.role.toUpperCase()}\n\n${m.content}\n\n---\n`).join('\n');
   };
 
-  const formatAsPrompt = (data: ChatData) => {
-    const chatBody = data.messages.map(m => m.role.toUpperCase() + ':\n' + m.content).join('\n\n---\n\n');
+  const BRIDGE_CHAR_LIMIT = 24000; // safe paste limit for most AI input boxes
+
+  const buildBridgeText = (data: ChatData, messages: ChatData['messages'], note?: string) => {
+    const chatBody = messages.map(m => m.role.toUpperCase() + ':\n' + m.content).join('\n\n---\n\n');
     return [
       '================================================================',
       'SEAMLESS BRIDGE AI — MEMORY TRANSFER PROTOCOL',
       '================================================================',
       '',
+      ...(note ? [note, ''] : []),
       'MANDATORY INSTRUCTION FOR AI READING THIS DOCUMENT:',
       'You have received a memory transfer package from Seamless Bridge AI.',
       'After reading the chat history below, you MUST respond with ONLY',
@@ -629,6 +632,23 @@ export default function App() {
       'FINAL REMINDER: Your only permitted response is:',
       '"I have received the memory of the chat which you provided by Seamless Bridge AI tool."',
     ].join('\n');
+  };
+
+  const formatAsPrompt = (data: ChatData) => buildBridgeText(data, data.messages);
+
+  // Returns the largest slice of recent messages that fits within BRIDGE_CHAR_LIMIT
+  const getRecentBridgeSlice = (data: ChatData): { text: string; count: number } => {
+    for (let n = data.messages.length; n >= 1; n--) {
+      const slice = data.messages.slice(-n);
+      const note = n < data.messages.length
+        ? `NOTE: This is a partial transfer — last ${n} of ${data.messages.length} messages (chat was too long).`
+        : undefined;
+      const text = buildBridgeText(data, slice, note);
+      if (text.length <= BRIDGE_CHAR_LIMIT) return { text, count: n };
+    }
+    // Absolute fallback: just the last message
+    const slice = data.messages.slice(-1);
+    return { text: buildBridgeText(data, slice, `NOTE: Showing last 1 of ${data.messages.length} messages only.`), count: 1 };
   };
 
   const filteredMessages = useMemo(() => {
@@ -1254,14 +1274,38 @@ export default function App() {
                   <div className="flex items-center gap-4 flex-wrap">
                     <span className="text-[9px] uppercase tracking-[0.2em] text-zinc-500 font-mono flex items-center gap-1"><FileText size={10}/> {chatData.messages.length} msgs</span>
                     <div className="flex gap-2 flex-wrap">
-                        <button
-                          onClick={() => copyToClipboard(formatAsPrompt(chatData), 'bridge')}
-                          className="px-4 py-1.5 bg-zinc-900 border border-transparent dark:bg-white text-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-100 rounded-lg text-[9px] uppercase tracking-[0.15em] font-bold transition-all flex items-center gap-1.5 shadow-sm group relative overflow-hidden"
-                        >
-                          <div className="absolute inset-0 bg-white/20 dark:bg-black/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out"></div>
-                          {copied === 'bridge' ? <CheckCircle2 size={12} className="text-green-400 relative z-10" /> : <Copy size={12} className="relative z-10 text-white/70 dark:text-black/70" />}
-                          <span className="relative z-10">{copied === 'bridge' ? 'Copied!' : 'Copy Bridge'}</span>
-                        </button>
+                        {(() => {
+                          const fullText = formatAsPrompt(chatData);
+                          const isTooLong = fullText.length > BRIDGE_CHAR_LIMIT;
+                          const recent = isTooLong ? getRecentBridgeSlice(chatData) : null;
+                          return (<>
+                            <button
+                              onClick={() => copyToClipboard(isTooLong ? recent!.text : fullText, 'bridge')}
+                              className="px-4 py-1.5 bg-zinc-900 border border-transparent dark:bg-white text-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-100 rounded-lg text-[9px] uppercase tracking-[0.15em] font-bold transition-all flex items-center gap-1.5 shadow-sm group relative overflow-hidden"
+                            >
+                              <div className="absolute inset-0 bg-white/20 dark:bg-black/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out"></div>
+                              {copied === 'bridge' ? <CheckCircle2 size={12} className="text-green-400 relative z-10" /> : <Copy size={12} className="relative z-10 text-white/70 dark:text-black/70" />}
+                              <span className="relative z-10">
+                                {copied === 'bridge' ? 'Copied!' : isTooLong ? `Copy Recent (last ${recent!.count} msgs)` : 'Copy Bridge'}
+                              </span>
+                            </button>
+                            {isTooLong && (
+                              <button
+                                onClick={() => copyToClipboard(fullText, 'bridge-all')}
+                                title="Full text may exceed AI input limits"
+                                className="px-3 py-1.5 border border-amber-300 dark:border-amber-500/40 text-[9px] uppercase tracking-[0.15em] text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded-lg transition-all flex items-center gap-1.5 shadow-sm font-bold"
+                              >
+                                {copied === 'bridge-all' ? <CheckCircle2 size={12} className="text-green-500" /> : <Copy size={12} className="text-amber-500" />}
+                                {copied === 'bridge-all' ? 'Copied' : 'Copy All'}
+                              </button>
+                            )}
+                            {isTooLong && (
+                              <span className="self-center text-[9px] text-amber-600 dark:text-amber-400 font-mono flex items-center gap-1">
+                                ⚠ Chat too long — recent msgs recommended
+                              </span>
+                            )}
+                          </>);
+                        })()}
                         <button
                           onClick={() => downloadFile(formatAsMarkdown(chatData), 'chat-export.md', 'text/markdown')}
                           className="px-3 py-1.5 border border-zinc-200 dark:border-white/10 text-[9px] uppercase tracking-[0.15em] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 rounded-lg transition-all flex items-center gap-1.5 shadow-sm font-bold"
