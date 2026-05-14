@@ -16,58 +16,21 @@ chrome.runtime.onMessageExternal.addListener(
               func: () => {
                 return new Promise((resolve) => {
 
+                  // ─── Helpers ────────────────────────────────────────────────
                   const cleanText = (t) => {
                     if (!t) return '';
                     return t
-                      .replace(/[\u200B-\u200D\uFEFF]?[⭐\*]?turn\d+search\d+[⭐\*]?[\u200B-\u200D\uFEFF]?/g, '')
+                      .replace(/[\u200B-\u200D\uFEFF]?[⭐*]?turn\d+search\d+[⭐*]?[\u200B-\u200D\uFEFF]?/g, '')
                       .replace(/[\u200B-\u200D\uFEFF]/g, '')
+                      .replace(/\s+/g, ' ')
                       .trim();
                   };
 
                   const mapParts = (parts) => {
                     if (Array.isArray(parts)) {
-                      return cleanText(
-                        parts
-                          .map(p => typeof p === 'string' ? p : (p?.text || p?.value || p?.content || ''))
-                          .filter(Boolean)
-                          .join('\n')
-                      );
+                      return cleanText(parts.map(p => typeof p === 'string' ? p : (p?.text || p?.value || p?.content || '')).filter(Boolean).join('\n'));
                     }
                     return cleanText(String(parts || ''));
-                  };
-
-                  const buildMessages = (root) => {
-                    const out = [];
-                    const search = (obj) => {
-                      if (!obj || typeof obj !== 'object') return;
-                      if (Array.isArray(obj)) { obj.forEach(search); return; }
-
-                      // Pattern A: { role, content: { parts } }  ← ChatGPT API
-                      if ((obj.role === 'user' || obj.role === 'assistant') &&
-                          obj.content != null && obj.content.parts !== undefined) {
-                        const text = mapParts(obj.content.parts).trim();
-                        if (text) out.push({ role: obj.role, content: text, content_html: text });
-                        return;
-                      }
-
-                      // Pattern B: { author: { role }, content: { parts } }
-                      if ((obj.author?.role === 'user' || obj.author?.role === 'assistant') &&
-                          obj.content != null && obj.content.parts !== undefined) {
-                        const text = mapParts(obj.content.parts).trim();
-                        if (text) out.push({ role: obj.author.role, content: text, content_html: text });
-                        return;
-                      }
-
-                      // Pattern C: { message: { role, content: { parts } } }
-                      if (obj.message && obj.message.role && obj.message.content?.parts !== undefined) {
-                        search(obj.message);
-                        return;
-                      }
-
-                      try { Object.values(obj).forEach(search); } catch (_) {}
-                    };
-                    search(root);
-                    return out;
                   };
 
                   const dedupe = (msgs) => {
@@ -80,247 +43,482 @@ chrome.runtime.onMessageExternal.addListener(
                     });
                   };
 
-                  const title = document.title || 'Extracted Chat';
-                  const hostname = window.location.hostname;
-                  const isGemini = hostname.includes('gemini.google.com');
-                  const isClaude = hostname.includes('claude.ai');
-                  const isDeepSeek = hostname.includes('deepseek.com');
-                  const isPerplexity = hostname.includes('perplexity.ai');
-                  const isGrok = hostname.includes('grok.com');
-
-                  // ── Gemini-specific extraction ──────────────────────────────
-                  const tryGeminiExtract = () => {
-                    if (!isGemini) return false;
-
-                    const msgs = [];
-
-                    // Strategy 1: Gemini embeds conversation data in a script tag as AF_initDataCallback
-                    try {
-                      const scripts = document.querySelectorAll('script');
-                      for (const script of scripts) {
-                        const text = script.textContent || '';
-                        // Gemini uses AF_initDataCallback with nested arrays
-                        if (text.includes('AF_initDataCallback') && text.includes('"user"')) {
-                          // Extract all string arrays that look like conversation turns
-                          const matches = text.matchAll(/"(user|model)","([^"]{10,})"/g);
-                          for (const m of matches) {
-                            const role = m[1] === 'model' ? 'assistant' : 'user';
-                            const content = m[2].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-                            if (content.trim()) {
-                              msgs.push({ role, content: content.trim(), content_html: content.trim() });
-                            }
-                          }
-                          if (msgs.length > 0) break;
-                        }
-                      }
-                    } catch (_) {}
-
-                    if (msgs.length > 0) {
-                      resolve({ success: true, title, messages: dedupe(msgs) });
-                      return true;
-                    }
-
-                    // Strategy 2: DOM-based extraction using Gemini's custom elements
-                    // Gemini share pages use <user-query> and <model-response> custom elements
-                    const domMsgs = [];
-
-                    // Try Gemini's custom element selectors
-                    const userNodes = document.querySelectorAll(
-                      'user-query, .user-query, [data-turn-type="user"], .conversation-turn-user, ' +
-                      '.query-content, user-query-content, .user-request-text'
-                    );
-                    const modelNodes = document.querySelectorAll(
-                      'model-response, .model-response, [data-turn-type="model"], .conversation-turn-model, ' +
-                      'response-container, .response-content, model-response-text, .response-text'
-                    );
-
-                    if (userNodes.length > 0 || modelNodes.length > 0) {
-                      // Build ordered list by finding common parent and iterating children
-                      const allTurns = [];
-
-                      userNodes.forEach(el => {
-                        allTurns.push({ el, role: 'user', top: el.getBoundingClientRect().top + window.scrollY });
-                      });
-                      modelNodes.forEach(el => {
-                        allTurns.push({ el, role: 'assistant', top: el.getBoundingClientRect().top + window.scrollY });
-                      });
-
-                      allTurns.sort((a, b) => a.top - b.top);
-
-                      for (const turn of allTurns) {
-                        const text = (turn.el.textContent || '').trim();
-                        const html = (turn.el.innerHTML || '').trim();
-                        if (text.length > 0) {
-                          domMsgs.push({ role: turn.role, content: text, content_html: html || text });
-                        }
-                      }
-                    }
-
-                    // Strategy 3: Generic conversation container scan for Gemini
-                    if (domMsgs.length === 0) {
-                      // Try message-content elements — Gemini often wraps turns this way
-                      const containers = document.querySelectorAll(
-                        'message-content, .message-content, conversation-turn, .conversation-turn, ' +
-                        '.chat-turn, [class*="turn"], [class*="message-row"]'
-                      );
-
-                      containers.forEach((el) => {
-                        const cls = (el.className || '').toLowerCase();
-                        const tag = (el.tagName || '').toLowerCase();
-                        let role = 'unknown';
-
-                        if (cls.includes('user') || tag === 'user-query') {
-                          role = 'user';
-                        } else if (cls.includes('model') || cls.includes('assistant') || cls.includes('response') || tag === 'model-response') {
-                          role = 'assistant';
-                        }
-
-                        const text = (el.textContent || '').trim();
-                        if (text.length > 5) {
-                          domMsgs.push({ role, content: text, content_html: el.innerHTML || text });
-                        }
-                      });
-                    }
-
-                    // Strategy 4: Scan all script tags for JSON arrays with role/parts patterns (Gemini specific)
-                    if (domMsgs.length === 0) {
-                      try {
-                        const scripts = document.querySelectorAll('script');
-                        for (const script of scripts) {
-                          const text = script.textContent || '';
-                          if (text.length < 100) continue;
-                          // Look for Gemini's protobuf-style nested arrays with role indicators
-                          // Gemini often serialises: [null, null, [["role", ...], ["content", ...]]]
-                          const roleUserIdx = text.indexOf('"1"'); // user role in Gemini proto
-                          const roleModelIdx = text.indexOf('"2"'); // model role in Gemini proto
-                          if ((roleUserIdx > -1 || roleModelIdx > -1) && text.includes('parts')) {
-                            // Try parsing any JSON-like object
-                            try {
-                              const jsonMatch = text.match(/\[[\s\S]{200,}\]/);
-                              if (jsonMatch) {
-                                const parsed = JSON.parse(jsonMatch[0]);
-                                const msgs2 = buildMessages(parsed);
-                                if (msgs2.length > 0) {
-                                  resolve({ success: true, title, messages: dedupe(msgs2) });
-                                  return true;
-                                }
-                              }
-                            } catch (_) {}
-                          }
-                        }
-                      } catch (_) {}
-                    }
-
-                    if (domMsgs.length > 0) {
-                      // Fix unknown roles using alternating logic
-                      let isUser = true;
-                      for (const m of domMsgs) {
-                        if (m.role === 'unknown') {
-                          m.role = isUser ? 'user' : 'assistant';
-                        }
-                        isUser = m.role !== 'user';
-                      }
-                      resolve({ success: true, title, messages: dedupe(domMsgs) });
-                      return true;
-                    }
-
-                    return false;
+                  const fixUnknownRoles = (msgs) => {
+                    let isUser = true;
+                    return msgs.map(m => {
+                      if (m.role === 'unknown') m.role = isUser ? 'user' : 'assistant';
+                      isUser = m.role !== 'user';
+                      return m;
+                    });
                   };
 
-                  // ── ChatGPT/General extraction ──────────────────────────────
-                  const tryExtract = () => {
-                    // Try Gemini first if on Gemini
-                    if (isGemini && tryGeminiExtract()) return true;
+                  // Sort elements by their DOM position (top offset)
+                  const sortByDomOrder = (items) => items.sort((a, b) => {
+                    const ra = a.el.getBoundingClientRect();
+                    const rb = b.el.getBoundingClientRect();
+                    return (ra.top + window.scrollY) - (rb.top + window.scrollY);
+                  });
 
-                    if (window.__remixContext) {
-                      try {
-                        const msgs = buildMessages(window.__remixContext);
-                        if (msgs.length > 0) {
-                          resolve({ success: true, title, messages: dedupe(msgs) });
-                          return true;
-                        }
-                      } catch (_) {}
-                    }
+                  // Deep-search JS object for chat message patterns
+                  const buildMessagesFromObj = (root) => {
+                    const out = [];
+                    const search = (obj) => {
+                      if (!obj || typeof obj !== 'object') return;
+                      if (Array.isArray(obj)) { obj.forEach(search); return; }
 
-                    if (window.__NEXT_DATA__) {
-                      try {
-                        const msgs = buildMessages(window.__NEXT_DATA__);
-                        if (msgs.length > 0) {
-                          resolve({ success: true, title, messages: dedupe(msgs) });
-                          return true;
-                        }
-                      } catch (_) {}
-                    }
+                      // Pattern A: { role, content: { parts } }  ← ChatGPT/Gemini API
+                      if ((obj.role === 'user' || obj.role === 'assistant') && obj.content?.parts !== undefined) {
+                        const text = mapParts(obj.content.parts).trim();
+                        if (text) out.push({ role: obj.role, content: text, content_html: text });
+                        return;
+                      }
+                      // Pattern B: { author: { role }, content: { parts } }
+                      if ((obj.author?.role === 'user' || obj.author?.role === 'assistant') && obj.content?.parts !== undefined) {
+                        const text = mapParts(obj.content.parts).trim();
+                        if (text) out.push({ role: obj.author.role, content: text, content_html: text });
+                        return;
+                      }
+                      // Pattern C: { message: { role, content: { parts } } }
+                      if (obj.message?.role && obj.message.content?.parts !== undefined) {
+                        search(obj.message); return;
+                      }
+                      // Pattern D: Claude { sender: "human"|"assistant", text }
+                      if ((obj.sender === 'human' || obj.sender === 'assistant') && obj.text) {
+                        const role = obj.sender === 'human' ? 'user' : 'assistant';
+                        const text = cleanText(typeof obj.text === 'string' ? obj.text : mapParts(obj.text));
+                        if (text) out.push({ role, content: text, content_html: text });
+                        return;
+                      }
+                      // Pattern E: { role: "user"|"assistant", content: string }
+                      if ((obj.role === 'user' || obj.role === 'assistant') && typeof obj.content === 'string' && obj.content.length > 0) {
+                        out.push({ role: obj.role, content: cleanText(obj.content), content_html: cleanText(obj.content) });
+                        return;
+                      }
+                      try { Object.values(obj).forEach(search); } catch (_) {}
+                    };
+                    search(root);
+                    return out;
+                  };
 
-                    const globals = ['__reactRouterDataStrategies', '__reactRouterContext',
-                                     '__reactRouterManifest', 'remixContext'];
-                    for (const key of globals) {
+                  // ─── Platform Detection ─────────────────────────────────────
+                  const hostname = window.location.hostname;
+                  const pathname = window.location.pathname;
+                  const title = document.title || 'Extracted Chat';
+
+                  const isChatGPT    = hostname.includes('chatgpt.com');
+                  const isGemini     = hostname.includes('gemini.google.com');
+                  const isClaude     = hostname.includes('claude.ai');
+                  const isGrok       = hostname.includes('grok.com') || (hostname.includes('x.com') && pathname.includes('/grok'));
+                  const isPerplexity = hostname.includes('perplexity.ai');
+                  const isDeepSeek   = hostname.includes('deepseek.com');
+
+                  const done = (msgs) => resolve({ success: msgs.length > 0, title, messages: dedupe(fixUnknownRoles(msgs)) });
+
+                  // ══════════════════════════════════════════════════════════════
+                  // CLAUDE  (claude.ai/share/...)
+                  // ══════════════════════════════════════════════════════════════
+                  const tryClaudeExtract = () => {
+                    if (!isClaude) return false;
+                    const msgs = [];
+
+                    // Strategy 1: window.__NEXT_DATA__ or window.__SSR_DATA__
+                    for (const key of ['__NEXT_DATA__', '__SSR_DATA__', '__NUXT_DATA__']) {
                       if (window[key]) {
                         try {
-                          const msgs = buildMessages(window[key]);
-                          if (msgs.length > 0) {
-                            resolve({ success: true, title, messages: dedupe(msgs) });
-                            return true;
-                          }
+                          const found = buildMessagesFromObj(window[key]);
+                          if (found.length > 0) { done(found); return true; }
                         } catch (_) {}
                       }
                     }
 
+                    // Strategy 2: data-testid selectors — most reliable for Claude share pages
+                    const humanTurns = document.querySelectorAll('[data-testid="human-turn"], [data-testid="user-turn"]');
+                    const aiTurns    = document.querySelectorAll('[data-testid="ai-turn"], [data-testid="assistant-turn"]');
+
+                    if (humanTurns.length > 0 || aiTurns.length > 0) {
+                      const allTurns = [];
+                      humanTurns.forEach(el => allTurns.push({ el, role: 'user' }));
+                      aiTurns.forEach(el => allTurns.push({ el, role: 'assistant' }));
+                      sortByDomOrder(allTurns).forEach(({ el, role }) => {
+                        const text = cleanText(el.textContent || '');
+                        if (text) msgs.push({ role, content: text, content_html: el.innerHTML || text });
+                      });
+                    }
+
+                    // Strategy 3: font-* class selectors
+                    if (msgs.length === 0) {
+                      const nodes = document.querySelectorAll('.font-user-message, .font-claude-message, [class*="human-turn"], [class*="ai-turn"]');
+                      nodes.forEach(el => {
+                        const cls = (el.className || '').toLowerCase();
+                        const isUser = cls.includes('user') || cls.includes('human');
+                        const text = cleanText(el.textContent || '');
+                        if (text) msgs.push({ role: isUser ? 'user' : 'assistant', content: text, content_html: el.innerHTML || text });
+                      });
+                    }
+
+                    // Strategy 4: article elements (Claude sometimes uses these)
+                    if (msgs.length === 0) {
+                      document.querySelectorAll('article').forEach((el, i) => {
+                        const text = cleanText(el.textContent || '');
+                        if (text) msgs.push({ role: i % 2 === 0 ? 'user' : 'assistant', content: text, content_html: el.innerHTML || text });
+                      });
+                    }
+
+                    if (msgs.length > 0) { done(msgs); return true; }
                     return false;
                   };
 
-                  if (tryExtract()) return;
+                  // ══════════════════════════════════════════════════════════════
+                  // GROK  (grok.com/share/...)
+                  // ══════════════════════════════════════════════════════════════
+                  const tryGrokExtract = () => {
+                    if (!isGrok) return false;
+                    const msgs = [];
 
-                  // Poll: wait for hydration
+                    // Strategy 1: __NEXT_DATA__ (Grok uses Next.js)
+                    if (window.__NEXT_DATA__) {
+                      try {
+                        const found = buildMessagesFromObj(window.__NEXT_DATA__);
+                        if (found.length > 0) { done(found); return true; }
+                      } catch (_) {}
+                    }
+
+                    // Strategy 2: Look for Grok's conversation data in other globals
+                    for (const key of ['__INITIAL_STATE__', '__APP_STATE__', 'grokData', '__GROK_DATA__']) {
+                      if (window[key]) {
+                        try {
+                          const found = buildMessagesFromObj(window[key]);
+                          if (found.length > 0) { done(found); return true; }
+                        } catch (_) {}
+                      }
+                    }
+
+                    // Strategy 3: DOM extraction with strict alternation
+                    // Grok uses obfuscated Tailwind classes — use structural heuristics
+                    // Find the main conversation container
+                    const possibleContainers = document.querySelectorAll(
+                      '[class*="conversation"], [class*="message-list"], [class*="chat"], main, [role="main"]'
+                    );
+
+                    let bestContainer = null;
+                    let maxChildren = 0;
+                    possibleContainers.forEach(el => {
+                      const childCount = el.children.length;
+                      if (childCount > maxChildren && childCount > 1) {
+                        maxChildren = childCount;
+                        bestContainer = el;
+                      }
+                    });
+
+                    if (bestContainer) {
+                      Array.from(bestContainer.children).forEach((el, i) => {
+                        const text = cleanText(el.textContent || '');
+                        if (text.length > 5) {
+                          msgs.push({ role: i % 2 === 0 ? 'user' : 'assistant', content: text, content_html: el.innerHTML || text });
+                        }
+                      });
+                    }
+
+                    // Strategy 4: Broad scan — find elements with significant text, use alternation
+                    if (msgs.length === 0) {
+                      const candidates = document.querySelectorAll('[class*="message"], [class*="bubble"], [class*="turn"], [class*="response"]');
+                      const seen = new Set();
+                      candidates.forEach(el => {
+                        const text = cleanText(el.textContent || '');
+                        if (text.length > 10 && !seen.has(text.substring(0, 80))) {
+                          seen.add(text.substring(0, 80));
+                          msgs.push({ role: 'unknown', content: text, content_html: el.innerHTML || text });
+                        }
+                      });
+                    }
+
+                    // Force strict alternation for Grok (obfuscated classes = unreliable role detection)
+                    if (msgs.length > 0) {
+                      msgs.forEach((m, i) => { m.role = i % 2 === 0 ? 'user' : 'assistant'; });
+                      done(msgs);
+                      return true;
+                    }
+                    return false;
+                  };
+
+                  // ══════════════════════════════════════════════════════════════
+                  // PERPLEXITY  (perplexity.ai/search/...)
+                  // ══════════════════════════════════════════════════════════════
+                  const tryPerplexityExtract = () => {
+                    if (!isPerplexity) return false;
+                    const msgs = [];
+
+                    // Strategy 1: __NEXT_DATA__ (Perplexity uses Next.js)
+                    if (window.__NEXT_DATA__) {
+                      try {
+                        // Perplexity stores queries and answers in pageProps
+                        const data = window.__NEXT_DATA__;
+                        const pageProps = data?.props?.pageProps || data?.props || {};
+
+                        // Look for thread/messages structure
+                        const thread = pageProps?.thread || pageProps?.initialData?.thread || pageProps?.dehydratedState;
+                        if (thread) {
+                          const found = buildMessagesFromObj(thread);
+                          if (found.length > 0) { done(found); return true; }
+                        }
+
+                        // Fallback: search all of __NEXT_DATA__
+                        const found = buildMessagesFromObj(data);
+                        if (found.length > 0) { done(found); return true; }
+                      } catch (_) {}
+                    }
+
+                    // Strategy 2: data-testid selectors
+                    const queryEls  = document.querySelectorAll('[data-testid="query-text"], [data-testid="user-query"], [class*="UserQuery"], [class*="user-query"]');
+                    const answerEls = document.querySelectorAll('[data-testid="answer-text"], [data-testid="ai-answer"], [class*="Answer"], [class*="answer"]');
+
+                    if (queryEls.length > 0 || answerEls.length > 0) {
+                      const allTurns = [];
+                      queryEls.forEach(el => allTurns.push({ el, role: 'user' }));
+                      answerEls.forEach(el => allTurns.push({ el, role: 'assistant' }));
+                      sortByDomOrder(allTurns).forEach(({ el, role }) => {
+                        const text = cleanText(el.textContent || '');
+                        if (text) msgs.push({ role, content: text, content_html: el.innerHTML || text });
+                      });
+                    }
+
+                    // Strategy 3: Perplexity question/answer DOM scan
+                    if (msgs.length === 0) {
+                      // Perplexity share pages: questions in headings/bold, answers in prose blocks
+                      const questions = document.querySelectorAll('h1, h2, h3, [class*="query"], [class*="question"]');
+                      const answers   = document.querySelectorAll('[class*="prose"], [class*="markdown"], [class*="answer"], [class*="response"]');
+
+                      const allTurns = [];
+                      questions.forEach(el => {
+                        const text = cleanText(el.textContent || '');
+                        if (text.length > 5 && text.length < 500) allTurns.push({ el, role: 'user' });
+                      });
+                      answers.forEach(el => {
+                        const text = cleanText(el.textContent || '');
+                        if (text.length > 20) allTurns.push({ el, role: 'assistant' });
+                      });
+
+                      sortByDomOrder(allTurns).forEach(({ el, role }) => {
+                        const text = cleanText(el.textContent || '');
+                        if (text) msgs.push({ role, content: text, content_html: el.innerHTML || text });
+                      });
+                    }
+
+                    if (msgs.length > 0) { done(msgs); return true; }
+                    return false;
+                  };
+
+                  // ══════════════════════════════════════════════════════════════
+                  // DEEPSEEK  (chat.deepseek.com/share/...)
+                  // ══════════════════════════════════════════════════════════════
+                  const tryDeepSeekExtract = () => {
+                    if (!isDeepSeek) return false;
+                    const msgs = [];
+
+                    // Strategy 1: React hydration globals
+                    for (const key of ['__NEXT_DATA__', '__REACT_ROUTER_DATA__', '__INITIAL_STATE__']) {
+                      if (window[key]) {
+                        try {
+                          const found = buildMessagesFromObj(window[key]);
+                          if (found.length > 0) { done(found); return true; }
+                        } catch (_) {}
+                      }
+                    }
+
+                    // Strategy 2: DOM extraction — DeepSeek uses chat bubble structure
+                    const userEls  = document.querySelectorAll('[class*="user-message"], [class*="human"], .fbb737a4, [data-role="user"]');
+                    const botEls   = document.querySelectorAll('[class*="assistant-message"], [class*="bot-message"], [class*="ds-markdown"], [data-role="assistant"]');
+
+                    if (userEls.length > 0 || botEls.length > 0) {
+                      const allTurns = [];
+                      userEls.forEach(el => allTurns.push({ el, role: 'user' }));
+                      botEls.forEach(el => allTurns.push({ el, role: 'assistant' }));
+                      sortByDomOrder(allTurns).forEach(({ el, role }) => {
+                        const text = cleanText(el.textContent || '');
+                        if (text) msgs.push({ role, content: text, content_html: el.innerHTML || text });
+                      });
+                    }
+
+                    // Strategy 3: Generic class scan for DeepSeek
+                    if (msgs.length === 0) {
+                      document.querySelectorAll('[class*="message"], [class*="chat-message"]').forEach(el => {
+                        const cls = (el.className || '').toLowerCase();
+                        const isUser = cls.includes('user') || cls.includes('human');
+                        const isBot  = cls.includes('assistant') || cls.includes('bot') || cls.includes('ai');
+                        if (!isUser && !isBot) return;
+                        const text = cleanText(el.textContent || '');
+                        if (text.length > 5) msgs.push({ role: isUser ? 'user' : 'assistant', content: text, content_html: el.innerHTML || text });
+                      });
+                    }
+
+                    if (msgs.length > 0) { done(msgs); return true; }
+                    return false;
+                  };
+
+                  // ══════════════════════════════════════════════════════════════
+                  // GEMINI  (gemini.google.com/share/...)
+                  // ══════════════════════════════════════════════════════════════
+                  const tryGeminiExtract = () => {
+                    if (!isGemini) return false;
+                    const msgs = [];
+
+                    // Strategy 1: AF_initDataCallback script tags
+                    try {
+                      document.querySelectorAll('script').forEach(script => {
+                        const text = script.textContent || '';
+                        if (!text.includes('AF_initDataCallback')) return;
+                        const matches = [...text.matchAll(/"(user|model)","([^"]{5,})"/g)];
+                        matches.forEach(m => {
+                          const role = m[1] === 'model' ? 'assistant' : 'user';
+                          const content = m[2].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+                          if (content.trim()) msgs.push({ role, content: content.trim(), content_html: content.trim() });
+                        });
+                      });
+                    } catch (_) {}
+
+                    if (msgs.length > 0) { done(msgs); return true; }
+
+                    // Strategy 2: Gemini custom elements (user-query / model-response)
+                    const userNodes  = document.querySelectorAll('user-query, .user-query, [data-turn-type="user"]');
+                    const modelNodes = document.querySelectorAll('model-response, .model-response, [data-turn-type="model"]');
+
+                    if (userNodes.length > 0 || modelNodes.length > 0) {
+                      const allTurns = [];
+                      userNodes.forEach(el => allTurns.push({ el, role: 'user' }));
+                      modelNodes.forEach(el => allTurns.push({ el, role: 'assistant' }));
+                      sortByDomOrder(allTurns).forEach(({ el, role }) => {
+                        const text = cleanText(el.textContent || '');
+                        if (text) msgs.push({ role, content: text, content_html: el.innerHTML || text });
+                      });
+                      if (msgs.length > 0) { done(msgs); return true; }
+                    }
+
+                    // Strategy 3: message-content / conversation-turn elements
+                    document.querySelectorAll('message-content, .message-content, conversation-turn, .conversation-turn').forEach(el => {
+                      const cls = (el.className || '').toLowerCase();
+                      const tag = (el.tagName || '').toLowerCase();
+                      let role = 'unknown';
+                      if (cls.includes('user') || tag === 'user-query') role = 'user';
+                      else if (cls.includes('model') || cls.includes('response') || tag === 'model-response') role = 'assistant';
+                      const text = cleanText(el.textContent || '');
+                      if (text.length > 5) msgs.push({ role, content: text, content_html: el.innerHTML || text });
+                    });
+
+                    if (msgs.length > 0) { done(msgs); return true; }
+                    return false;
+                  };
+
+                  // ══════════════════════════════════════════════════════════════
+                  // CHATGPT  (chatgpt.com/share/...)
+                  // ══════════════════════════════════════════════════════════════
+                  const tryChatGPTExtract = () => {
+                    // window.__remixContext — current ChatGPT share format
+                    if (window.__remixContext) {
+                      try {
+                        const found = buildMessagesFromObj(window.__remixContext);
+                        if (found.length > 0) { done(found); return true; }
+                      } catch (_) {}
+                    }
+                    // window.__NEXT_DATA__ — older ChatGPT format
+                    if (window.__NEXT_DATA__) {
+                      try {
+                        const found = buildMessagesFromObj(window.__NEXT_DATA__);
+                        if (found.length > 0) { done(found); return true; }
+                      } catch (_) {}
+                    }
+                    // React Router globals
+                    for (const key of ['__reactRouterDataStrategies', '__reactRouterContext', '__reactRouterManifest', 'remixContext']) {
+                      if (window[key]) {
+                        try {
+                          const found = buildMessagesFromObj(window[key]);
+                          if (found.length > 0) { done(found); return true; }
+                        } catch (_) {}
+                      }
+                    }
+                    return false;
+                  };
+
+                  // ══════════════════════════════════════════════════════════════
+                  // UNIVERSAL DOM FALLBACK
+                  // ══════════════════════════════════════════════════════════════
+                  const universalDomFallback = () => {
+                    const msgs = [];
+
+                    // 1. data-message-author-role (ChatGPT)
+                    document.querySelectorAll('[data-message-author-role]').forEach(el => {
+                      const role = el.getAttribute('data-message-author-role');
+                      if (role !== 'user' && role !== 'assistant') return;
+                      const text = cleanText(el.textContent || '');
+                      if (text) msgs.push({ role, content: text, content_html: el.innerHTML || text });
+                    });
+                    if (msgs.length > 0) return msgs;
+
+                    // 2. Claude class selectors
+                    document.querySelectorAll('.font-user-message, .font-claude-message, [data-testid="human-turn"], [data-testid="ai-turn"]').forEach(el => {
+                      const cls = (el.className || '') + (el.getAttribute('data-testid') || '');
+                      const isUser = cls.includes('user') || cls.includes('human');
+                      const text = cleanText(el.textContent || '');
+                      if (text) msgs.push({ role: isUser ? 'user' : 'assistant', content: text, content_html: el.innerHTML || text });
+                    });
+                    if (msgs.length > 0) return msgs;
+
+                    // 3. Gemini custom elements
+                    const geminiTurns = [];
+                    document.querySelectorAll('user-query, model-response').forEach(el => {
+                      const tag = el.tagName.toLowerCase();
+                      const text = cleanText(el.textContent || '');
+                      if (text) geminiTurns.push({ el, role: tag === 'user-query' ? 'user' : 'assistant' });
+                    });
+                    if (geminiTurns.length > 0) {
+                      sortByDomOrder(geminiTurns).forEach(({ el, role }) => {
+                        const text = cleanText(el.textContent || '');
+                        if (text) msgs.push({ role, content: text, content_html: el.innerHTML || text });
+                      });
+                      return msgs;
+                    }
+
+                    // 4. Broad class-based scan as last resort
+                    const broadNodes = document.querySelectorAll('[class*="message"], [class*="bubble"], [class*="turn"], article');
+                    const seen = new Set();
+                    const broad = [];
+                    broadNodes.forEach(el => {
+                      const text = cleanText(el.textContent || '');
+                      const key = text.substring(0, 80);
+                      if (text.length > 10 && !seen.has(key)) {
+                        seen.add(key);
+                        const cls = (el.className || '').toLowerCase();
+                        const isUser = cls.includes('user') || cls.includes('human') || cls.includes('query');
+                        const isBot  = cls.includes('assistant') || cls.includes('model') || cls.includes('response') || cls.includes('bot') || cls.includes('ai');
+                        broad.push({ role: isUser ? 'user' : isBot ? 'assistant' : 'unknown', content: text, content_html: el.innerHTML || text });
+                      }
+                    });
+                    if (broad.length > 0) return fixUnknownRoles(broad);
+
+                    return msgs;
+                  };
+
+                  // ══════════════════════════════════════════════════════════════
+                  // MAIN DISPATCH — try immediately, then poll
+                  // ══════════════════════════════════════════════════════════════
+                  const tryAll = () => {
+                    if (isGemini     && tryGeminiExtract())     return true;
+                    if (isClaude     && tryClaudeExtract())     return true;
+                    if (isGrok       && tryGrokExtract())       return true;
+                    if (isPerplexity && tryPerplexityExtract()) return true;
+                    if (isDeepSeek   && tryDeepSeekExtract())   return true;
+                    if (tryChatGPTExtract())                    return true;
+                    return false;
+                  };
+
+                  if (tryAll()) return;
+
                   let attempts = 0;
                   const poll = setInterval(() => {
                     attempts++;
-
-                    // For Gemini, try DOM extraction on every poll attempt since it's DOM-rendered
-                    if (isGemini && tryGeminiExtract()) {
+                    if (tryAll() || attempts >= 24) {
                       clearInterval(poll);
-                      return;
-                    }
-
-                    if (tryExtract() || attempts >= 20) {
-                      clearInterval(poll);
-                      if (attempts >= 20) {
-                        // ── Universal DOM fallback ─────────────────────────────
-                        const msgs = [];
-
-                        // ChatGPT
-                        document.querySelectorAll('[data-message-author-role]').forEach(el => {
-                          const role = el.getAttribute('data-message-author-role');
-                          if (role !== 'user' && role !== 'assistant') return;
-                          const text = (el.textContent || '').trim();
-                          if (text) msgs.push({ role, content: text, content_html: (el.innerHTML || '').trim() });
-                        });
-
-                        // Claude
-                        if (msgs.length === 0) {
-                          document.querySelectorAll('.font-user-message, .font-claude-message').forEach(el => {
-                            const isUser = (el.className || '').includes('user');
-                            const text = (el.textContent || '').trim();
-                            if (text) msgs.push({ role: isUser ? 'user' : 'assistant', content: text, content_html: el.innerHTML || text });
-                          });
-                        }
-
-                        // Gemini broad fallback
-                        if (msgs.length === 0 && isGemini) {
-                          const allEls = document.querySelectorAll('[class*="query"], [class*="response"], [class*="message"], user-query, model-response');
-                          allEls.forEach(el => {
-                            const cls = (el.className || '').toLowerCase();
-                            const tag = (el.tagName || '').toLowerCase();
-                            const isUser = cls.includes('query') || cls.includes('user') || tag === 'user-query';
-                            const isModel = cls.includes('response') || cls.includes('model') || tag === 'model-response';
-                            if (!isUser && !isModel) return;
-                            const text = (el.textContent || '').trim();
-                            if (text.length > 5) {
-                              msgs.push({ role: isUser ? 'user' : 'assistant', content: text, content_html: el.innerHTML || text });
-                            }
-                          });
-                        }
-
+                      if (attempts >= 24) {
+                        const msgs = universalDomFallback();
                         resolve({ success: msgs.length > 0, title, messages: dedupe(msgs) });
                       }
                     }
@@ -329,14 +527,9 @@ chrome.runtime.onMessageExternal.addListener(
                 });
               }
             }, (results) => {
-              let payload = null;
-              if (results && results[0] && results[0].result) {
-                payload = results[0].result;
-              }
-
               chrome.tabs.remove(tabId);
-
-              if (payload && payload.success && payload.messages) {
+              const payload = results?.[0]?.result || null;
+              if (payload?.success && payload?.messages?.length > 0) {
                 sendResponse(payload);
               } else {
                 sendResponse({ success: false });
