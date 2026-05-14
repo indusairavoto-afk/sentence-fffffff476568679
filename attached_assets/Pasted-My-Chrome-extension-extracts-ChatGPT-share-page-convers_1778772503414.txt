@@ -1,0 +1,78 @@
+My Chrome extension extracts ChatGPT share page conversations.
+
+Transport, server limits, and payload size are already fixed.
+We now send only structured { title, messages[] }.
+
+But the first message of the chat is still missing.
+
+This is NOT a network issue.
+This is NOT a timing issue.
+This is a DOM selector issue.
+
+Root cause
+
+The extension currently selects messages using something like:
+
+document.querySelectorAll('[data-message-author-role]')
+
+or
+
+document.querySelectorAll('article')
+
+This works for most messages, but ChatGPT share pages use TWO different DOM layouts:
+
+The very first message block is inside a special wrapper and does NOT match the standard selector.
+The rest of the conversation uses the normal layout.
+
+So the extractor skips the first block entirely.
+
+That is why every extracted chat starts from the second assistant message.
+
+What you must do
+
+Do NOT select messages by [data-message-author-role].
+
+Instead:
+
+Step 1 — Select all message wrapper nodes
+
+Use this selector:
+
+const messageNodes = document.querySelectorAll(
+  'main div[class*="group w-full"]'
+);
+
+This captures BOTH the special first block and the normal ones.
+
+Step 2 — For each wrapper, find the role inside
+const messages = [];
+
+messageNodes.forEach(node => {
+  const roleEl = node.querySelector('[data-message-author-role]');
+  if (!roleEl) return;
+
+  const role = roleEl.getAttribute('data-message-author-role');
+  const text = node.innerText.trim();
+
+  if (text.length > 0) {
+    messages.push({ role, content: text });
+  }
+});
+Important
+
+Do NOT rely on:
+
+article
+[data-message-author-role] as the main selector
+.markdown only
+Any selector that assumes uniform layout
+
+We must always select the outer wrapper first, then detect role inside.
+
+Expected result
+
+After this change, the extracted messages array must include the very first message visible on the ChatGPT share page.
+
+Right now it starts from the second message — this must be fixed.
+
+Please update the content script extraction logic accordingly.

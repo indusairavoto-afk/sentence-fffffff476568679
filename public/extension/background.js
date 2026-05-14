@@ -105,20 +105,44 @@ chrome.runtime.onMessageExternal.addListener(
                     const messages = [];
                     const REMOVE_SELECTORS = 'button, [aria-label], svg, [data-testid*="action"], [class*="btn"], [class*="button"], form';
 
-                    document.querySelectorAll('[data-message-author-role]').forEach(el => {
-                      const role = el.getAttribute('data-message-author-role');
+                    // ChatGPT share pages use TWO different DOM layouts:
+                    // - The very first message block sits in a special wrapper
+                    //   that does NOT carry [data-message-author-role] directly
+                    // - The remaining messages use the standard layout
+                    // Selecting the outer "group w-full" wrappers first, then
+                    // finding the role attribute inside, captures BOTH layouts.
+                    const wrappers = document.querySelectorAll(
+                      'main div[class*="group"][class*="w-full"], ' +
+                      'main article, ' +
+                      'main [data-testid*="conversation-turn"]'
+                    );
+
+                    // Fallback: if wrapper approach yields nothing, use direct selector
+                    const nodes = wrappers.length > 0
+                      ? wrappers
+                      : document.querySelectorAll('[data-message-author-role]');
+
+                    nodes.forEach(node => {
+                      // Find the role — either on this node or inside it
+                      const roleEl = node.getAttribute('data-message-author-role')
+                        ? node
+                        : node.querySelector('[data-message-author-role]');
+                      if (!roleEl) return;
+
+                      const role = roleEl.getAttribute('data-message-author-role');
                       if (role !== 'user' && role !== 'assistant') return;
 
+                      // Find the best content container
                       let target;
                       if (role === 'user') {
-                        target = el.querySelector('[data-message-text-content="true"]') ||
-                                 el.querySelector('.whitespace-pre-wrap') ||
-                                 el.querySelector('[class*="user-message"]') ||
-                                 el;
+                        target = node.querySelector('[data-message-text-content="true"]') ||
+                                 node.querySelector('.whitespace-pre-wrap') ||
+                                 node.querySelector('[class*="user-message"]') ||
+                                 node;
                       } else {
-                        target = el.querySelector('.markdown') ||
-                                 el.querySelector('[class*="prose"]') ||
-                                 el;
+                        target = node.querySelector('.markdown') ||
+                                 node.querySelector('[class*="prose"]') ||
+                                 node;
                       }
 
                       // Clone and strip UI chrome (buttons, icons, etc.)
@@ -133,7 +157,15 @@ chrome.runtime.onMessageExternal.addListener(
                       }
                     });
 
-                    resolve({ success: true, title, messages });
+                    // Deduplicate adjacent identical messages (can happen when
+                    // both wrapper selectors match the same node)
+                    const deduped = messages.filter((msg, i) => {
+                      if (i === 0) return true;
+                      const prev = messages[i - 1];
+                      return msg.content.trim() !== prev.content.trim() || msg.role !== prev.role;
+                    });
+
+                    resolve({ success: true, title, messages: deduped });
                   }
 
                 });
