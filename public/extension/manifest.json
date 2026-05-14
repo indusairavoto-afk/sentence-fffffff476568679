@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT HTML Extractor",
+  "version": "1.0",
+  "description": "Background extractor for ChatGPT share links",
+  "permissions": [
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://gemini.google.com/*",
+    "https://claude.ai/*",
+    "https://chat.deepseek.com/*",
+    "https://grok.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.run.app/*",
+        "https://*.onrender.com/*",
+        "http://localhost:3000/*",
+        "http://127.0.0.1:3000/*"
+      ],
+      "js": ["content-inject.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "externally_connectable": {
+    "matches": [
+      "https://*.run.app/*",
+      "https://*.onrender.com/*",
+      "http://localhost:3000/*",
+      "http://127.0.0.1:3000/*"
+    ]
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

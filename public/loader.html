@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Extracting...</title>
+</head>
+<body>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const targetUrl = urlParams.get('url');
+
+        if (targetUrl) {
+            window.location.href = targetUrl;
+
+            // Notice: Due to browser security (Cross-Origin Navigation), this script will usually be 
+            // terminated as soon as the navigation occurs.
+            // As per UX requirements: "Because the script started on our domain before navigation, it must continue running after the page loads."
+            
+            setTimeout(() => {
+                try {
+                    const messages = [];
+                    const elements = document.querySelectorAll('[data-message-author-role]');
+                    
+                    elements.forEach(el => {
+                        let role = el.getAttribute('data-message-author-role');
+                        if (role !== 'user' && role !== 'assistant') {
+                            role = 'assistant';
+                        }
+                        
+                        let target = el.querySelector('.markdown');
+                        if (!target) target = el;
+
+                        const contentHtml = target.innerHTML || target.textContent;
+                        
+                        if (contentHtml && contentHtml.trim().length > 0) {
+                            messages.push({
+                                role: role,
+                                content_html: contentHtml
+                            });
+                        }
+                    });
+
+                    if (messages.length > 0 && window.opener) {
+                        window.opener.postMessage({ type: 'CHAT_DATA', messages }, '*');
+                    }
+                    if(messages.length > 0) {
+                        window.close();
+                    }
+                } catch (e) {
+                    console.error("DOM Extraction Error:", e);
+                }
+            }, 2500);
+        }
+    </script>
+</body>
+</html>

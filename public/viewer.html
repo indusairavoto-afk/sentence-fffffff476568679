@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat Viewer</title>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #000000;
+            --user-msg-bg: #000000;
+            --user-msg-text: #ffffff;
+            --assistant-msg-bg: #f4f4f5;
+            --assistant-msg-text: #000000;
+            --spacing-base: 1rem;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #121212;
+                --text-color: #ffffff;
+                --user-msg-bg: #ffffff;
+                --user-msg-text: #000000;
+                --assistant-msg-bg: #27272a;
+                --assistant-msg-text: #ffffff;
+            }
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 0;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem var(--spacing-base);
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--assistant-msg-bg);
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            margin: 0;
+        }
+
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .message-row {
+            display: flex;
+            width: 100%;
+        }
+
+        .message-row.user {
+            justify-content: flex-end;
+        }
+
+        .message-row.assistant {
+            justify-content: flex-start;
+        }
+
+        .message-bubble {
+            max-width: 85%;
+            padding: 1rem 1.25rem;
+            border-radius: 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            word-wrap: break-word;
+        }
+
+        .message-row.user .message-bubble {
+            background-color: var(--user-msg-bg);
+            color: var(--user-msg-text);
+            border-bottom-right-radius: 0.25rem;
+        }
+
+        .message-row.assistant .message-bubble {
+            background-color: var(--assistant-msg-bg);
+            color: var(--assistant-msg-text);
+            border-bottom-left-radius: 0.25rem;
+        }
+
+        .message-text {
+            white-space: pre-wrap; /* Preserves line breaks */
+            font-size: 1rem;
+            margin: 0;
+        }
+
+        .message-images {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            margin-top: 0.5rem;
+        }
+
+        .message-images img {
+            max-width: 100%;
+            border-radius: 0.75rem;
+            display: block;
+            object-fit: contain;
+            background: rgba(0,0,0,0.05);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .message-images img {
+                background: rgba(255,255,255,0.05);
+            }
+        }
+
+        /* Loading & Error States */
+        .status {
+            text-align: center;
+            opacity: 0.6;
+            font-size: 0.9rem;
+            padding: 2rem;
+        }
+
+        .error {
+            color: #ef4444;
+            text-align: center;
+            padding: 2rem;
+            border: 1px solid #ef4444;
+            border-radius: 0.5rem;
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        /* Basic Markdown overrides (code blocks etc) */
+        pre {
+            background: rgba(128, 128, 128, 0.1);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.85rem;
+        }
+
+        code {
+            font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.85em;
+            background: rgba(128, 128, 128, 0.15);
+            padding: 0.1em 0.3em;
+            border-radius: 0.2em;
+        }
+        
+        pre code {
+            background: transparent;
+            padding: 0;
+        }
+
+        @media (max-width: 600px) {
+            .message-bubble {
+                max-width: 95%;
+            }
+            .container {
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="header">
+            <h1>Chat Viewer</h1>
+        </div>
+
+        <div id="chat-container" class="chat-container">
+            <div id="status" class="status">Loading chat JSON...</div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const chatContainer = document.getElementById('chat-container');
+            const statusElement = document.getElementById('status');
+
+            // Replace 'chat.json' with your actual json endpoint or file path
+            const jsonPath = 'chat.json';
+
+            function processData(data) {
+                if (!Array.isArray(data)) {
+                    // Some systems output { messages: [...] }
+                    if (data.messages && Array.isArray(data.messages)) {
+                        data = data.messages;
+                    } else {
+                        throw new Error('Invalid JSON format: Expected an array of messages.');
+                    }
+                }
+
+                if (data.length === 0) {
+                    chatContainer.innerHTML = '<div class="status">No messages found in chat.json</div>';
+                    return;
+                }
+
+                data.forEach(msg => {
+                    renderMessage(msg, chatContainer);
+                });
+            }
+
+            fetch(jsonPath)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Failed to load ${jsonPath} (Status: ${response.status})`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (statusElement) statusElement.remove();
+                    processData(data);
+                })
+                .catch(error => {
+                    if (statusElement) statusElement.remove();
+                    const fallbackDiv = document.createElement('div');
+                    fallbackDiv.className = 'status';
+                    fallbackDiv.style.opacity = '1';
+                    fallbackDiv.innerHTML = `
+                        <div style="margin-bottom: 1rem;">
+                            <strong>Local Offline Mode </strong><br>
+                            <span style="opacity: 0.7;">Auto-loading <code>chat.json</code> failed or is blocked by your browser's local security policy (CORS).</span>
+                        </div>
+                        <div style="padding: 1.5rem; border: 1px dashed var(--text-color); border-radius: 0.5rem; display: inline-block; opacity: 0.8;">
+                            Select your <strong>chat.json</strong> file manually:<br><br>
+                            <input type="file" id="local-file-input" accept=".json" style="font-size: 1rem; cursor: pointer;">
+                        </div>
+                    `;
+                    chatContainer.appendChild(fallbackDiv);
+                    console.warn('Could not auto-fetch JSON, falling back to manual upload:', error);
+
+                    document.getElementById('local-file-input').addEventListener('change', (e) => {
+                        const file = e.target.files[0];
+                        if (!file) return;
+                        
+                        const reader = new FileReader();
+                        reader.onload = (evt) => {
+                            try {
+                                const parsedData = JSON.parse(evt.target.result);
+                                fallbackDiv.remove();
+                                processData(parsedData);
+                            } catch (err) {
+                                alert("Failed to parse JSON file: " + err.message);
+                            }
+                        };
+                        reader.readAsText(file);
+                    });
+                });
+        });
+
+        function renderMessage(msg, container) {
+            // Determine role (default to assistant if undefined or unknown)
+            const role = (msg.role === 'user') ? 'user' : 'assistant';
+            
+            // Determine text content (handle either text, content, or fallback)
+            const textContent = msg.text || msg.content || '';
+
+            // Handle images (might be savedImages, imagesUrls, or images depending on format)
+            const images = msg.savedImages || msg.images || msg.imagesUrls || [];
+
+            // Skip entirely empty messages
+            if (!textContent.trim() && images.length === 0) return;
+
+            // Row wrapper for alignment
+            const rowDiv = document.createElement('div');
+            rowDiv.className = `message-row ${role}`;
+
+            // Bubble
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = 'message-bubble';
+
+            // Text
+            if (textContent.trim()) {
+                const textDiv = document.createElement('div');
+                textDiv.className = 'message-text';
+                // Escape HTML partially just in case, but keep pre-wrap intact.
+                // For a more advanced setup, use a Markdown parser.
+                textDiv.textContent = textContent; 
+                bubbleDiv.appendChild(textDiv);
+            }
+
+            // Images
+            if (images.length > 0) {
+                const imagesDiv = document.createElement('div');
+                imagesDiv.className = 'message-images';
+
+                images.forEach(imgSrc => {
+                    const imgEl = document.createElement('img');
+                    imgEl.src = imgSrc;
+                    // Provide fallback alt text
+                    imgEl.alt = `${role} uploaded image`;
+                    // Basic error handling for broken image links
+                    imgEl.onerror = () => {
+                        imgEl.style.display = 'none';
+                    };
+                    imagesDiv.appendChild(imgEl);
+                });
+
+                bubbleDiv.appendChild(imagesDiv);
+            }
+
+            rowDiv.appendChild(bubbleDiv);
+            container.appendChild(rowDiv);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Bridge Loader...</title>
+</head>
+<body>
+  <div style="font-family: sans-serif; padding: 20px; text-align: center;">
+    Loading chat page... Please wait.
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const target = params.get('target');
+
+    if (target) {
+      location.href = target;
+    }
+
+    // According to the requested pattern:
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        try {
+          const html = document.documentElement.outerHTML;
+
+          if (window.opener) {
+            window.opener.postMessage({
+              type: 'CHAT_HTML',
+              html
+            }, '*');
+          }
+
+          window.close();
+        } catch (e) {
+          console.error("Extraction error:", e);
+        }
+      }, 5000);
+    });
+  </script>
+</body>
+</html>
