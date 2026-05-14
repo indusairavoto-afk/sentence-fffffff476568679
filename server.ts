@@ -21,31 +21,52 @@ function cleanHtml($, el) {
   let output = '';
   
   function walk(node) {
+    if (!node) return;
     if (node.type === 'text') {
-      output += node.data.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      output += (node.data || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     } else if (node.type === 'tag') {
-      const tagName = node.name.toLowerCase();
+      const tagName = (node.name || '').toLowerCase();
+      if (!tagName) return;
       const isAllowed = ALLOWED_TAGS.has(tagName);
       
       if (isAllowed) {
-        // preserve href for a tags?
         if (tagName === 'a' && node.attribs && node.attribs.href) {
-           const href = node.attribs.href.replace(/"/g, '&quot;');
-           output += '<' + tagName + ' href="' + href + '">';
+          const href = node.attribs.href || '';
+          // Strip dangerous protocols (javascript:, data:, vbscript:)
+          const safePrefixes = ['http://', 'https://', '//', '/', '#', 'mailto:'];
+          const isSafe = safePrefixes.some(p => href.toLowerCase().startsWith(p));
+          if (isSafe) {
+            output += '<a href="' + href.replace(/"/g, '&quot;') + '" rel="noopener noreferrer" target="_blank">';
+          } else {
+            output += '<span>';
+          }
         } else {
-           output += '<' + tagName + '>';
+          output += '<' + tagName + '>';
         }
       }
       
-      $(node).contents().each((_, child) => walk(child));
+      if ($(node).contents) {
+        $(node).contents().each((_, child) => walk(child));
+      }
       
       if (isAllowed) {
-        output += '</' + tagName + '>';
+        if (tagName === 'a' && node.attribs && node.attribs.href) {
+          const href = node.attribs.href || '';
+          const safePrefixes = ['http://', 'https://', '//', '/', '#', 'mailto:'];
+          const isSafe = safePrefixes.some(p => href.toLowerCase().startsWith(p));
+          output += isSafe ? '</a>' : '</span>';
+        } else {
+          output += '</' + tagName + '>';
+        }
       }
     }
   }
   
-  $(el).contents().each((_, child) => walk(child));
+  try {
+    $(el).contents().each((_, child) => walk(child));
+  } catch (e) {
+    // Silently skip malformed nodes
+  }
   return output.trim();
 }
 
@@ -438,6 +459,29 @@ app.post("/api/extract-html", async (req, res) => {
         try {
           // Only try to fetch if it's a real absolute URL, avoid data URIs or relative paths
           if (imgUrl.startsWith("http")) {
+            // SSRF protection: block requests to private/internal addresses
+            try {
+              const parsed = new URL(imgUrl);
+              const host = parsed.hostname.toLowerCase();
+              const isPrivate =
+                host === 'localhost' ||
+                host === '127.0.0.1' ||
+                host === '0.0.0.0' ||
+                host === '::1' ||
+                host === '169.254.169.254' ||
+                host.endsWith('.local') ||
+                host.endsWith('.internal') ||
+                /^10\./.test(host) ||
+                /^192\.168\./.test(host) ||
+                /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+              if (isPrivate) {
+                localImages.push(imgUrl);
+                continue;
+              }
+            } catch {
+              localImages.push(imgUrl);
+              continue;
+            }
             const response = await fetch(imgUrl, {
               headers: {
                 "User-Agent":
@@ -995,9 +1039,16 @@ function extractMessagesFromHtml(html: string) {
       } else if (messages.length === 0) {
         // Use DOM messages as primary source
         domHtmlMessages.forEach(dm => {
+          let contentText = '';
+          try {
+            contentText = turndownService.turndown(dm.content_html);
+          } catch (e) {
+            // Fallback: strip HTML tags to get plain text
+            contentText = dm.content_html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          }
           messages.push({
             role: dm.role,
-            content: turndownService.turndown(dm.content_html),
+            content: contentText,
             content_html: dm.content_html,
           });
         });

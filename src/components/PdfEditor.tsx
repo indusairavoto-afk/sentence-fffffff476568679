@@ -5,6 +5,7 @@ import { X, Download, FileText, ChevronRight, CheckCircle2, FileDown } from 'luc
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
+import DOMPurify from 'dompurify';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
 import { saveAs } from 'file-saver';
 import { toast } from 'sonner';
@@ -100,6 +101,12 @@ const PdfMessage = React.memo(({
               title="Click to edit in sidebar, Double-click to edit inline"
             >
               <div className="absolute -inset-2 border-2 border-dashed border-transparent group-hover:border-blue-400/30 rounded-lg pointer-events-none transition-colors hidden sm:block"></div>
+              {msg.content_html ? (
+              <div
+                className="chat-html-content"
+                dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(msg.content_html, { USE_PROFILES: { html: true } }) }}
+              />
+            ) : (
               <ReactMarkdown 
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeRaw]}
@@ -133,8 +140,9 @@ const PdfMessage = React.memo(({
                 )
               }}
             >
-              {msg.content_html || msg.content}
+              {msg.content}
             </ReactMarkdown>
+            )}
           </div>
           )}
         </div>

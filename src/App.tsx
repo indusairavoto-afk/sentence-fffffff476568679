@@ -18,6 +18,8 @@ import { PdfEditor } from './components/PdfEditor';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
+import DOMPurify from 'dompurify';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { vaultDbTools } from './lib/vaultDb';
 
 import { Toaster, toast } from 'sonner';
@@ -1275,7 +1277,7 @@ export default function App() {
                             {msg.content_html ? (
                               <div
                                 className="chat-html-content"
-                                dangerouslySetInnerHTML={{ __html: msg.content_html }}
+                                dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(msg.content_html, { USE_PROFILES: { html: true } }) }}
                               />
                             ) : (
                               <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
