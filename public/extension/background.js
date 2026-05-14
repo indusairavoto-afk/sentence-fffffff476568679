@@ -20,14 +20,26 @@ chrome.runtime.onMessageExternal.addListener(
               func: () => {
                 return new Promise((resolve) => {
 
+                  const cleanText = (t) => {
+                    if (!t) return '';
+                    return t
+                      // ChatGPT citation markers: ‌⭐turn0search3‌⭐  etc.
+                      .replace(/[\u200B-\u200D\uFEFF]?[⭐\*]?turn\d+search\d+[⭐\*]?[\u200B-\u200D\uFEFF]?/g, '')
+                      // Any remaining zero-width characters
+                      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+                      .trim();
+                  };
+
                   const mapParts = (parts) => {
                     if (Array.isArray(parts)) {
-                      return parts
-                        .map(p => typeof p === 'string' ? p : (p?.text || p?.value || p?.content || ''))
-                        .filter(Boolean)
-                        .join('\n');
+                      return cleanText(
+                        parts
+                          .map(p => typeof p === 'string' ? p : (p?.text || p?.value || p?.content || ''))
+                          .filter(Boolean)
+                          .join('\n')
+                      );
                     }
-                    return String(parts || '');
+                    return cleanText(String(parts || ''));
                   };
 
                   const buildMessages = (root) => {

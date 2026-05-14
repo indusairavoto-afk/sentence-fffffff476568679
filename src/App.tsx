@@ -400,8 +400,8 @@ export default function App() {
             const now = Date.now();
             const formattedMessages = extResult.messages.map((m: any, index: number) => ({
               role: m.role,
-              content: m.content || m.content_html || '',
-              content_html: m.content_html || undefined,
+              content: m.content || '',
+              content_html: undefined,
               images: [],
               timestamp: new Date(now - (extResult.messages.length - index) * 60000).toISOString(),
             }));
@@ -1365,16 +1365,18 @@ export default function App() {
                             </div>
                           )}
 
-                          <div className="prose dark:prose-invert max-w-none text-sm leading-relaxed prose-p:my-2 prose-pre:my-3 prose-pre:bg-zinc-100 dark:prose-pre:bg-zinc-800 prose-pre:text-zinc-900 dark:prose-pre:text-zinc-100 prose-img:max-h-32 prose-img:object-contain prose-img:rounded-md prose-img:my-2 overflow-x-auto">
+                          <div className="overflow-x-auto">
                             {msg.content_html ? (
                               <div
                                 className="chat-html-content"
                                 dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(msg.content_html, { USE_PROFILES: { html: true } }) }}
                               />
                             ) : (
-                              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-                                {msg.content}
-                              </ReactMarkdown>
+                              <div className="md-prose">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                                  {msg.content}
+                                </ReactMarkdown>
+                              </div>
                             )}
                           </div>
 
