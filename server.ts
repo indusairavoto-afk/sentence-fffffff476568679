@@ -122,33 +122,7 @@ async function extractChatViaAxios(url: string) {
     }
   }
 
-  const $ = cheerio.load(data);
-  const title = $('title').text() || 'Extracted Chat';
-  const messages: any[] = [];
-
-  $('[data-message-author-role]').each((i, el) => {
-    let role = $(el).attr('data-message-author-role');
-    if (role !== 'user' && role !== 'assistant') {
-       role = 'assistant';
-    }
-    
-    // Some ChatGPT pages nest .markdown inside the element
-    let target = $(el).find('.markdown');
-    if (target.length === 0) {
-      target = $(el); // fallback
-    } else {
-      target = target.first();
-    }
-    
-    const contentHtml = cleanHtml($, target);
-    
-    messages.push({
-      role: role,
-      content_html: contentHtml
-    });
-  });
-
-  return { title, messages };
+  return extractMessagesFromHtml(data);
 }
 
 
@@ -336,7 +310,12 @@ app.post("/api/extract", async (req, res) => {
 
     // Format them for the frontend
     const now = Date.now();
-    const formattedMessages = messages.map((m, index) => ({ role: m.role, content_html: m.content_html, content: m.content_html || '', timestamp: new Date(now - (messages.length - index) * 60000).toISOString() }));
+    const formattedMessages = messages.map((m, index) => ({ 
+      role: m.role, 
+      content_html: m.content_html || m.content || '', 
+      content: m.content || m.content_html || '', 
+      timestamp: m.timestamp || new Date(now - (messages.length - index) * 60000).toISOString() 
+    }));
 
     // If completely empty, just return error
     if (formattedMessages.length === 0) {
@@ -630,6 +609,10 @@ function extractMessagesFromHtml(html: string) {
   let isDeadLink = false;
   let deadLinkMessage = "Could not extract structured messages from this HTML file.";
 
+  const mapParts = (parts: any) => Array.isArray(parts) 
+    ? parts.map((p: any) => typeof p === 'string' ? p : (p.text || p.text?.value || p.content || "")).filter(Boolean).join("\n") 
+    : String(parts);
+
   // Check for known 404 or deleted chat signatures
   if (
     title.includes("404") || 
@@ -681,7 +664,7 @@ function extractMessagesFromHtml(html: string) {
             // ChatGPT API-like structure
             messages.push({
               role: obj.role,
-              content: obj.content.parts.join("\n"),
+              content: mapParts(obj.content.parts),
               timestamp,
             });
           } else {
@@ -735,7 +718,7 @@ function extractMessagesFromHtml(html: string) {
                   ) {
                     messages.push({
                        role: obj.role,
-                       content: Array.isArray(obj.content.parts) ? obj.content.parts.join('\n') : String(obj.content.parts)
+                       content: mapParts(obj.content.parts)
                     });
                   } else if (
                     obj.author &&
@@ -745,7 +728,7 @@ function extractMessagesFromHtml(html: string) {
                   ) {
                     messages.push({
                        role: obj.author.role,
-                       content: Array.isArray(obj.content.parts) ? obj.content.parts.join('\n') : String(obj.content.parts)
+                       content: mapParts(obj.content.parts)
                     });
                   } else {
                     Object.values(obj).forEach(searchMessages);
@@ -812,9 +795,7 @@ function extractMessagesFromHtml(html: string) {
                   ) {
                     messages.push({
                       role: obj.author.role,
-                      content: Array.isArray(obj.content.parts)
-                        ? obj.content.parts.join("\n")
-                        : String(obj.content.parts),
+                      content: mapParts(obj.content.parts),
                     });
                   }
                   // ChatGPT Alternative pattern
@@ -826,9 +807,7 @@ function extractMessagesFromHtml(html: string) {
                   ) {
                     messages.push({
                       role: obj.role,
-                      content: Array.isArray(obj.content.parts)
-                        ? obj.content.parts.join("\n")
-                        : String(obj.content.parts),
+                      content: mapParts(obj.content.parts),
                     });
                   }
                   // Claude pattern
@@ -901,9 +880,7 @@ function extractMessagesFromHtml(html: string) {
                 ) {
                   messages.push({
                     role: obj.author.role,
-                    content: Array.isArray(obj.content.parts)
-                      ? obj.content.parts.join("\n")
-                      : String(obj.content.parts),
+                    content: mapParts(obj.content.parts),
                     timestamp,
                   });
                 }
@@ -916,9 +893,7 @@ function extractMessagesFromHtml(html: string) {
                 ) {
                   messages.push({
                     role: obj.role,
-                    content: Array.isArray(obj.content.parts)
-                      ? obj.content.parts.join("\n")
-                      : String(obj.content.parts),
+                    content: mapParts(obj.content.parts),
                     timestamp,
                   });
                 }
@@ -1151,6 +1126,19 @@ function extractMessagesFromHtml(html: string) {
             'script, style, svg, noscript, nav, header, footer, button, [aria-hidden="true"], .sr-only, .visually-hidden, .cdk-visually-hidden, #onetrust-consent-sdk, [class*="onetrust"], [id*="onetrust"], [class*="cookie-banner"]',
           )
           .remove();
+        
+        // Specifically remove "Show more" / "Show less" text blocks
+        $clone.find('*').each((_: any, el: any) => {
+          const $child = $(el);
+          // don't remove large blocks, only small elements that match exactly
+          if ($child.children().length === 0) {
+            const text = $child.text().trim();
+            if (text === "Show more" || text === "Show less" || text === "Copy code" || text === "Show moreShow less") {
+               $child.remove();
+            }
+          }
+        });
+
         let content = "";
         try {
           content = turndownService.turndown($clone.html() || "");
@@ -1160,8 +1148,13 @@ function extractMessagesFromHtml(html: string) {
             selectors: [{ selector: "pre", format: "dataTable" }],
           });
         }
-        content = content.replace(/Uploaded an image/gi, "");
-        content = content.replace(/Show moreShow less/gi, "");
+        content = content.replace(/Uploaded an image[\s\S]*?(?:$|\n)/gi, "");
+        content = content.replace(/Show more[\s]*Show less/gi, "");
+        content = content.replace(/Show more/gi, "");
+        content = content.replace(/Show less/gi, "");
+        content = content.replace(/(?:\b|^)Copy code\b/gi, "");
+        content = content.replace(/([^\n])\n\*(?=\s)/g, "$1\n\n*"); // Fix turndown list missing blank line
+        content = content.trim();
 
         const imgs = $el
           .find("img")
@@ -1251,6 +1244,16 @@ function extractMessagesFromHtml(html: string) {
       const $clean = cheerio.load(html);
       $clean('script, style, noscript, nav, header, footer, button, [aria-hidden="true"], .sr-only, .visually-hidden, #onetrust-consent-sdk, [class*="onetrust"], [id*="onetrust"], [class*="cookie-banner"]').remove();
       
+      $clean('*').each((_: any, el: any) => {
+        const $child = $clean(el);
+        if ($child.children().length === 0) {
+          const text = $child.text().trim();
+          if (text === "Show more" || text === "Show less" || text === "Copy code" || text === "Show moreShow less") {
+             $child.remove();
+          }
+        }
+      });
+
       // Absolute fallback: Just extract all text from the main container
       let main = $clean('main, .main, #content, [role="main"]').first();
       if (main.length === 0) main = $clean("body");
@@ -1273,21 +1276,39 @@ function extractMessagesFromHtml(html: string) {
         .replace(/window.*?oai_SSR[\s\S]*?(?:Date\.now|requestAnimationFrame)[\s\S]*?\)\}\)/g, "") // new ChatGPT fallback JS junk
         .replace(/window\.\\_\\_oai[^\s]*/g, "") // escaped versions
         .replace(/window\.\.\\.oai[^\s]*/g, "") // markdown escaped version
+        .replace(/This is a copy of a shared.*?(?:Date\.now\(\)\}\)|Date\.now\(\)\)\})/gi, "") // Aggressive wipe of frontmatter
+        .replace(/Uploaded an image[\s\S]*?(?:$|\n)/gi, "")
+        .replace(/Show more[\s]*Show less/gi, "")
+        .replace(/Show more/gi, "")
+        .replace(/Show less/gi, "")
+        .replace(/(?:\b|^)Copy code\b/gi, "")
+        .replace(/([^\n])\n\*(?=\s)/g, "$1\n\n*") // Fix turndown list bug
         .trim();
 
       // If the content is literally just the fallback junk that got past the regexes, drop it
-      if (cleanedContent.includes("oai_logHTML") || cleanedContent.includes("oai_SSR_HTML") || cleanedContent.includes("requestAnimationFrame")) {
+      if (cleanedContent.includes("oai_logHTML") || cleanedContent.includes("oai_SSR_HTML") || /Date\.now\(\)/.test(cleanedContent) || cleanedContent.includes("requestAnimationFrame")) {
          // It's just junk script data, skip fallback
       } else if (cleanedContent.length > 50 && !cleanedContent.includes("_._oai_")) {
         // Check if this looks like a generic transcript dump with "SOMEONE SAID:" markers
         const splitRegex =
           /\n?(?:(?:[A-Za-z0-9_ ]+) )?([A-Za-z0-9_]+) SAID:\n/gi;
-        const hasMarkers = splitRegex.test(cleanedContent);
+        
+        let hasMarkers = splitRegex.test(cleanedContent);
+        let activeRegex = splitRegex;
+        
+        if (!hasMarkers) {
+           // check for "You said:" pattern
+           const youSaidRegex = /\n?(?:([A-Za-z0-9_ ]+) said:\n)/gi;
+           if (youSaidRegex.test(cleanedContent)) {
+             hasMarkers = true;
+             activeRegex = youSaidRegex;
+           }
+        }
 
         if (hasMarkers) {
           // Reset lastIndex because test() modifies it
-          splitRegex.lastIndex = 0;
-          const parts = cleanedContent.split(splitRegex);
+          activeRegex.lastIndex = 0;
+          const parts = cleanedContent.split(activeRegex);
           // parts[0] is intro string
           for (let i = 1; i < parts.length; i += 2) {
             const speaker = parts[i] || "";
@@ -1304,10 +1325,44 @@ function extractMessagesFromHtml(html: string) {
             });
           }
         } else {
-          messages.push({
-            role: "unknown",
-            content: cleanedContent,
-          });
+          // Check for pure markdown headers alternating
+          const headerRegex = /\n?(?:#+ |!# )?(User|ChatGPT|Assistant|Claude|Copilot)\s*\n/gi;
+          if (headerRegex.test(cleanedContent)) {
+             headerRegex.lastIndex = 0;
+             const parts = cleanedContent.split(headerRegex);
+             for (let i = 1; i < parts.length; i += 2) {
+               const speaker = parts[i] || "";
+               const text = parts[i + 1] || "";
+               if (!text.trim()) continue;
+               
+               let currentRole = "user";
+               if (speaker.match(/chatgpt|claude|gemini|assistant|bot|ai|grok/i)) {
+                 currentRole = "assistant";
+               }
+               messages.push({
+                 role: currentRole,
+                 content: text.trim()
+               });
+             }
+          } else {
+            // Split by double newlines and assign alternating roles if it looks like a block of messages
+            const blocks = cleanedContent.split(/\n\n+/).map((b) => b.trim()).filter((b) => b.length > 0);
+            if (blocks.length > 1 && blocks.length < 100) {
+               let isUser = true;
+               for (const block of blocks) {
+                  messages.push({
+                     role: isUser ? "user" : "assistant",
+                     content: block
+                  });
+                  isUser = !isUser;
+               }
+            } else {
+              messages.push({
+                role: "unknown",
+                content: cleanedContent,
+              });
+            }
+          }
         }
       }
     }
@@ -1326,6 +1381,9 @@ function extractMessagesFromHtml(html: string) {
         (c.includes("This is a copy of a chat between") && c.includes("Anthropic")) ||
         (c.includes("This is a copy of a shared ChatGPT conversation")) ||
         (c.includes("_._oai_") && c.includes("window.")) ||
+        (c.includes("oai_logHTML")) ||
+        (c.includes("oai_SSR")) ||
+        (c.includes("requestAnimationFrame")) ||
         (c.trim() === "ChatGPT can make mistakes. Check important info.") ||
         (c.trim() === "Report conversation") ||
         (c.trim() === "Cookie Preferences");
