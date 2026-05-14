@@ -217,7 +217,6 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [vaultSaved, setVaultSaved] = useState(false);
-  const [linkStatus, setLinkStatus] = useState<{ step: string; progress: number } | null>(null);
   const [pendingAction, setPendingAction] = useState<'pdf' | 'bridge'>('bridge');
   const [uploadProgress, setUploadProgress] = useState<{ phase: string; percent: number } | null>(null);
   const [detectedPlatform, setDetectedPlatform] = useState<typeof PLATFORM_CONFIG[number] | null>(null);
@@ -1256,46 +1255,12 @@ export default function App() {
                     <span className="text-[9px] uppercase tracking-[0.2em] text-zinc-500 font-mono flex items-center gap-1"><FileText size={10}/> {chatData.messages.length} msgs</span>
                     <div className="flex gap-2 flex-wrap">
                         <button
-                          onClick={async () => {
-                            try {
-                              setCopied('loading');
-                              setLinkStatus({ step: 'Formatting conversation payload...', progress: 10 });
-                              await new Promise(r => setTimeout(r, 400));
-                              
-                              setLinkStatus({ step: 'Transmitting to secure pastebin...', progress: 45 });
-                              const res = await fetch('/api/public-bridge', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ text: formatAsPrompt(chatData) })
-                              });
-                              
-                              setLinkStatus({ step: 'Generating text-only public endpoint...', progress: 85 });
-                              const { url } = await res.json();
-                              
-                              setLinkStatus({ step: 'Finalizing bridge...', progress: 100 });
-                              await new Promise(r => setTimeout(r, 300));
-                              
-                              copyToClipboard(url, 'bridge');
-                            } catch (e) {
-                              console.error(e);
-                              setCopied(null);
-                            } finally {
-                              setLinkStatus(null);
-                            }
-                          }}
-                          disabled={copied === 'loading'}
-                          className="px-4 py-1.5 bg-zinc-900 border border-transparent dark:bg-white text-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-100 rounded-lg text-[9px] uppercase tracking-[0.15em] font-bold transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-80 disabled:cursor-not-allowed group relative overflow-hidden"
+                          onClick={() => copyToClipboard(formatAsPrompt(chatData), 'bridge')}
+                          className="px-4 py-1.5 bg-zinc-900 border border-transparent dark:bg-white text-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-100 rounded-lg text-[9px] uppercase tracking-[0.15em] font-bold transition-all flex items-center gap-1.5 shadow-sm group relative overflow-hidden"
                         >
                           <div className="absolute inset-0 bg-white/20 dark:bg-black/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out"></div>
-                          {copied === 'bridge' ? <CheckCircle2 size={12} className="text-green-400 relative z-10" /> : copied === 'loading' ? <Loader2 size={12} className="animate-spin relative z-10 text-white/70 dark:text-black/70" /> : <LinkIcon size={12} className="relative z-10 text-white/70 dark:text-black/70" />}
-                          <span className="relative z-10">{copied === 'bridge' ? 'Link Copied' : copied === 'loading' ? 'Generating...' : 'Public Link'}</span>
-                        </button>
-                        <button
-                          onClick={() => copyToClipboard(formatAsPrompt(chatData), 'prompt')}
-                          className="px-3 py-1.5 border border-zinc-200 dark:border-white/10 text-[9px] uppercase tracking-[0.15em] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 rounded-lg transition-all flex items-center gap-1.5 shadow-sm font-bold"
-                        >
-                          {copied === 'prompt' ? <CheckCircle2 size={12} className="text-green-500" /> : <Copy size={12} className="text-zinc-400" />}
-                          {copied === 'prompt' ? 'Copied' : 'Copy Text'}
+                          {copied === 'bridge' ? <CheckCircle2 size={12} className="text-green-400 relative z-10" /> : <Copy size={12} className="relative z-10 text-white/70 dark:text-black/70" />}
+                          <span className="relative z-10">{copied === 'bridge' ? 'Copied!' : 'Copy Bridge'}</span>
                         </button>
                         <button
                           onClick={() => downloadFile(formatAsMarkdown(chatData), 'chat-export.md', 'text/markdown')}
@@ -1319,31 +1284,6 @@ export default function App() {
                   </div>
                 </div>
 
-                <AnimatePresence>
-                  {linkStatus && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="border-b border-zinc-200/50 dark:border-white/10 overflow-hidden"
-                    >
-                      <div className="p-4 bg-zinc-50/80 dark:bg-zinc-900/40 backdrop-blur-md">
-                        <div className="flex justify-between items-center mb-2 font-mono text-[10px] uppercase tracking-widest text-zinc-600 dark:text-zinc-400">
-                          <span>{linkStatus.step}</span>
-                          <span className="text-zinc-900 dark:text-white font-bold">{linkStatus.progress}%</span>
-                        </div>
-                        <div className="h-1.5 w-full bg-zinc-200/50 dark:bg-black/50 overflow-hidden relative rounded-full shadow-inner">
-                          <motion.div
-                            className="absolute top-0 bottom-0 left-0 bg-gradient-to-r from-zinc-500 to-zinc-900 dark:from-zinc-400 dark:to-white rounded-full"
-                            initial={{ width: 0 }}
-                            animate={{ width: `${linkStatus.progress}%` }}
-                            transition={{ ease: "easeOut", duration: 0.3 }}
-                          />
-                        </div>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
 
                 <div className="bg-zinc-50/50 dark:bg-[#0a0a0a]/50 border-b border-zinc-200/50 dark:border-white/5 p-3 flex flex-col md:flex-row md:items-center justify-between gap-4 backdrop-blur-sm relative z-10">
                   <div className="text-[10px] text-zinc-600 dark:text-zinc-400 font-mono flex items-center gap-3">
